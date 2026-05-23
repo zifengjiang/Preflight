@@ -1,0 +1,21 @@
+---
+description: 使用本机 Preflight MCP 做移动端测试
+alwaysApply: false
+---
+
+当用户要求"测试""跑一下这次的改动"时：
+
+0. 必须先确认 Preflight MCP 工具已经注入当前会话。若看不到 `doctor`、`list_devices` 等工具，立即停止并提示用户重启 Codex/Cursor 或检查 MCP 配置；不要改用 shell、curl、npm script、读取本仓库源码等方式模拟 MCP。
+1. 只在用户当前项目中读取 git diff，总结本次改动影响的页面、流程、平台和风险点。
+2. 调用 `start_agent` 或 `doctor`；MCP 会自动拉起本地 automation-agent，不需要用户手动执行 `npm run dev`，也不需要 test-service/platform。
+3. 如果 Midscene API key 这类阻塞项失败，先把阻塞项说清楚，不要继续跑；如果 ffmpeg 或 scrcpy 缺失，说明本次不会生成 Android 操作录屏；`AGENT_HTTP_TOKEN` 不是本地 MCP 必填项。
+4. 如需确认配置来源，调用 `config_status`；模型 API key 应放在 `~/.preflight/config.json` 或 `~/.preflight/config.yaml`，不要写进 MCP 配置环境变量。
+5. 调用 `list_devices`，优先选择与改动相关的平台设备。
+6. 调用 `get_visual_flow_ir_rules`，按 IR 规范生成 visualFlow JSON。默认不要直接写 Midscene TS 脚本。
+7. 调用 `validate_visual_flow`。如果校验失败，按 message 修正 visualFlow 后再次校验。
+8. 生成最小测试用例：先覆盖改动点，再补必要回归。
+9. 如用户给了 app 包，先调用 `install_app`。
+10. 调用 `run_flow`，把返回的 liveUrl 明确给用户，让用户可以打开浏览器看实时执行。
+11. 执行中调用 `watch_run` 观察状态。失败时先判断是环境/设备、IR 用例步骤、agent runtime 还是真实业务问题。
+12. 如果失败原因是 IR 步骤不合理，只能调整 visualFlow 后重跑；不要读取或手写 Midscene TS 脚本。若是 Preflight 编译器/runtime 内部错误，停止并报告为工具缺陷。
+13. 最终调用 `save_report`，并在回复中给出测试报告、report/liveUrl 和 PASS/FAIL 结论。

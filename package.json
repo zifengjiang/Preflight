@@ -1,0 +1,38 @@
+{
+  "name": "preflight-mcp",
+  "version": "0.1.0",
+  "description": "Preflight — Local mobile AI testing via MCP. AI-assisted testing on real Android/iOS/Harmony devices.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "mcp": "tsx src/mcp/cli.ts",
+    "mcp:setup": "tsx src/mcp/cli.ts setup",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/tests/**/*.test.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@midscene/android": "^1.7.5",
+    "@midscene/harmony": "^1.7.5",
+    "@midscene/ios": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "koa": "^2.15.4",
+    "lodash": "^4.17.21",
+    "sharp": "^0.33.5",
+    "tsx": "^4.20.6",
+    "ws": "^8.18.3",
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/koa": "^3.0.2",
+    "@types/lodash": "^4.17.24",
+    "@types/node": "^20.17.57",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
+  }
+}

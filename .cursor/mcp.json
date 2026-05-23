@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "Preflight": {
+      "command": "/Users/didi/.preflight/runtime/node/bin/node",
+      "args": [
+        "/Users/didi/.preflight/runtime/dist/mcp/cli.js",
+        "serve"
+      ],
+      "env": {
+        "AGENT_RUNTIME_ROOT": "/Users/didi/.preflight/runtime",
+        "AGENT_BASE_URL": "http://127.0.0.1:18998",
+        "MCP_LIVE_PORT": "18999",
+        "PREFLIGHT_HOME": "/Users/didi/.preflight"
+      }
+    }
+  }
+}
