@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org/
-      - run: npm ci && npm test && npm run build
+      - run: npm install && npm test && npm run build
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -39,9 +39,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm ci
+      - run: npm install
       - run: npm run build
-      - run: npm ci --production
+      - run: npm install --production
       - name: Package tarball
         run: |
           OS_NAME="${{ matrix.os }}"
