@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  npm-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  platform-builds:
+    needs: npm-publish
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: npm ci --production
+      - name: Package tarball
+        run: |
+          OS_NAME="${{ matrix.os }}"
+          case "$OS_NAME" in
+            ubuntu-latest) PLATFORM="linux-x64" ;;
+            macos-latest)  PLATFORM="macos-arm64" ;;
+            macos-13)      PLATFORM="macos-x64" ;;
+          esac
+          tar -czf "preflight-${PLATFORM}.tar.gz" dist/ node_modules/ package.json
+      - name: Upload tarball to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: preflight-*.tar.gz
+
+  create-release:
+    needs: platform-builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

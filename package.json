@@ -4,6 +4,14 @@
   "description": "Preflight — Local mobile AI testing via MCP. AI-assisted testing on real Android/iOS/Harmony devices.",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "preflight-mcp": "dist/mcp/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20.11.0"
   },
