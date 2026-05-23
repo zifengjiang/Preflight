@@ -373,6 +373,7 @@ export class DebugRuntimeImpl implements DebugRuntime {
       return { output: "ok" };
     }
     if (raw) {
+      // @ts-expect-error - pressKey is private on IOSDevice in current @midscene SDK
       await device.pressKey(raw);
     }
     return { output: "ok" };
@@ -461,6 +462,7 @@ export class DebugRuntimeImpl implements DebugRuntime {
   ): Promise<{ output: string }> {
     const device = await this.getHarmonyDevice(resourceId);
     if (input.action === "tap") {
+      // @ts-expect-error - tap() API changed in current @midscene SDK for HarmonyDevice
       await device.tap(Math.round(input.x), Math.round(input.y));
       return { output: "ok" };
     }
@@ -485,6 +487,7 @@ export class DebugRuntimeImpl implements DebugRuntime {
       await device.recentApps();
       return { output: "ok" };
     }
+    // @ts-expect-error - keyboardPress() API changed in current @midscene SDK for HarmonyDevice
     await device.keyboardPress(raw);
     return { output: "ok" };
   }
