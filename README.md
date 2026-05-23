@@ -21,13 +21,15 @@ Preflight is an MCP (Model Context Protocol) server that connects AI coding assi
 | **hdc** | HarmonyOS | Ships with [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/). Ensure `hdc` is on your `PATH`. |
 | **AI model API key** | All platforms | A [Midscene](https://midscenejs.com/)-compatible vision model. Supports OpenAI, Anthropic, Doubao, and more. |
 
-### 1. One-command setup
+### 1. Install
 
 ```bash
-npm run mcp:setup
+npx preflite setup
 ```
 
-This creates `~/.preflight/runtime/` with a bundled Node.js and all compiled assets, then registers the `Preflight` MCP server in your editor's config (`.cursor/mcp.json` or `~/.codex/config.toml`).
+This downloads the runtime, compiles all assets, and registers the `Preflight` MCP server in your editor's config (`.cursor/mcp.json` or `~/.codex/config.toml`).
+
+> Alternatively, clone the repo and run `npm run mcp:setup` if you want to hack on Preflight itself.
 
 ### 2. Configure your AI model
 
