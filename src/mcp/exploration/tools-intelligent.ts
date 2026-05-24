@@ -113,7 +113,8 @@ export function aiActHandler(ctx: ExplorationToolContext) {
     const session = await resolveSession(input.sessionId, ctx);
     await session.agent.aiAct(input.intent);
     const afterSummary = await session.agent.aiAsk(
-      "刚刚的操作已完成。请判断：\n" +
+      `刚才执行的操作是：${input.intent}\n` +
+      "请判断这个操作的结果：\n" +
       "1) 操作是否改变了页面内容？（新页面、弹窗、滚动到底部、输入框获得焦点等）\n" +
       "2) 如果操作是滑动页面，是否滑到了底部或页面内容没有变化？\n" +
       "3) 当前页面布局类型是固定单屏还是可滚动长页面？\n" +
