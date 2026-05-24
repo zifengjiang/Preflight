@@ -88,6 +88,9 @@ export function getPageSummaryHandler(ctx: ExplorationToolContext) {
     const foregroundApp = await detectForegroundApp(session);
     const appRef = state.appRef;
 
+    // Save for aiActHandler's before/after comparison
+    state.lastPageSummary = summary;
+
     return {
       summary,
       app: {
@@ -111,18 +114,29 @@ export function askAboutScreenHandler(ctx: ExplorationToolContext) {
 export function aiActHandler(ctx: ExplorationToolContext) {
   return async (input: { sessionId: string; intent: string }): Promise<unknown> => {
     const session = await resolveSession(input.sessionId, ctx);
-    await session.agent.aiAct(input.intent);
-    const afterSummary = await session.agent.aiAsk(
-      `刚才执行的操作是：${input.intent}\n` +
-      "请判断这个操作的结果：\n" +
-      "1) 操作是否改变了页面内容？（新页面、弹窗、滚动到底部、输入框获得焦点等）\n" +
-      "2) 如果操作是滑动页面，是否滑到了底部或页面内容没有变化？\n" +
-      "3) 当前页面布局类型是固定单屏还是可滚动长页面？\n" +
-      "4) 当前页面出现的最关键变化是什么？\n" +
-      "如果你发现操作没有产生任何实际变化（比如反复滑动但没有新内容），请明确指出\"页面没有变化\"。",
+    const state = getSession(input.sessionId);
+
+    // Before-state: reuse from get_page_summary if available, otherwise grab a quick one
+    const beforeSummary = state.lastPageSummary ?? await session.agent.aiAsk(
+      "用一句话描述当前页面的最关键特征：什么类型的页面（列表/表单/弹窗/首页等），最显著的内容是什么。",
     );
 
-    const state = getSession(input.sessionId);
+    await session.agent.aiAct(input.intent);
+
+    const afterSummary = await session.agent.aiAsk(
+      `操作前的页面：${beforeSummary}\n` +
+      `执行的操作：${input.intent}\n` +
+      "请判断操作结果：\n" +
+      "1) 页面内容是否发生了变化？（进入了新页面、弹出弹窗、滚动到底部、输入框获得焦点等）\n" +
+      "2) 如果操作是滑动，是否已到达底部或页面没有变化？\n" +
+      "3) 当前页面布局类型是固定单屏还是可滚动长页面？\n" +
+      "4) 当前页面最关键的变化是什么？\n" +
+      "如果操作没有产生任何实际变化（比如反复滑动但没有新内容），请明确指出\"页面没有变化\"。",
+    );
+
+    // Update for next aiAct call
+    state.lastPageSummary = afterSummary;
+
     const foregroundApp = await detectForegroundApp(session);
 
     return {

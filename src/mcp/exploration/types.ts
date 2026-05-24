@@ -9,6 +9,7 @@ export interface ExplorationSessionState {
   platform: Platform;
   session: MidsceneSession;
   appRef?: string;
+  lastPageSummary?: string;
   createdAt: number;
   lastActivityAt: number;
 }
