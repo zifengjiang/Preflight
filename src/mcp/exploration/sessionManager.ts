@@ -29,6 +29,7 @@ export interface SessionMeta {
   resourceId: string;
   platform: Platform;
   env: Record<string, string>;
+  appRef?: string;
   createdAt: number;
   lastActivityAt: number;
 }
@@ -41,6 +42,7 @@ async function persistMeta(state: ExplorationSessionState, env: Record<string, s
     resourceId: state.resourceId,
     platform: state.platform,
     env,
+    appRef: state.appRef,
     createdAt: state.createdAt,
     lastActivityAt: state.lastActivityAt,
   };
@@ -75,12 +77,14 @@ export function createSession(
   platform: Platform,
   session: MidsceneSession,
   env: Record<string, string>,
+  appRef?: string,
 ): ExplorationSessionState {
   const state: ExplorationSessionState = {
     id,
     resourceId,
     platform,
     session,
+    appRef,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
   };
@@ -115,6 +119,7 @@ export function storeSession(id: string, session: MidsceneSession, meta: Session
     resourceId: meta.resourceId,
     platform: meta.platform,
     session,
+    appRef: meta.appRef,
     createdAt: meta.createdAt,
     lastActivityAt: Date.now(),
   };

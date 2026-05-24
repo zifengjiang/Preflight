@@ -294,26 +294,27 @@ export function getExplorationStartHandler(ctx: ExplorationToolContext) {
     const session = await createMidsceneSessionFromResourceId(resourceId, runtimeEnv);
 
     const sessionId = generateSessionId();
-    createSession(sessionId, resourceId, platform, session, runtimeEnv);
+    const appRef = input.appRef;
+    createSession(sessionId, resourceId, platform, session, runtimeEnv, appRef);
 
     try {
-      if (input.appRef) {
-        if (isInstallableRef(input.appRef)) {
-          await ctx.client.installApp(resourceId, input.appRef);
+      if (appRef) {
+        if (isInstallableRef(appRef)) {
+          await ctx.client.installApp(resourceId, appRef);
           return {
             sessionId,
             device: { platform, resourceId },
-            note: `App installed from ${input.appRef}. Use exploration_ai_act to launch it.`,
+            note: `App installed from ${appRef}. Use exploration_ai_act to launch it.`,
           };
         }
-        await session.agent.launch(input.appRef);
+        await session.agent.launch(appRef);
       }
     } catch (err) {
       await destroySessionById(sessionId).catch(() => {});
       throw err;
     }
 
-    return { sessionId, device: { platform, resourceId } };
+    return { sessionId, device: { platform, resourceId }, appRef: appRef ?? undefined };
   };
 }
 

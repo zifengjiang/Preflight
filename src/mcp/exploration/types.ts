@@ -8,6 +8,7 @@ export interface ExplorationSessionState {
   resourceId: string;
   platform: Platform;
   session: MidsceneSession;
+  appRef?: string;
   createdAt: number;
   lastActivityAt: number;
 }
