@@ -91,7 +91,7 @@ export function registerExplorationTools(
     {
       title: "Get Page Summary",
       description:
-        "Get a natural language summary of the current screen, including layout type (fixed single-screen / scrollable long page / multi-tab / list). Call this first when entering a new page to understand its structure before acting. Use this INSTEAD of ai_act if you just want to observe — ai_act is for changing state, not for looking around.",
+        "Get a natural language summary of the current screen, including layout type (fixed single-screen / scrollable long page / multi-tab / list). Call this first when entering a new page to understand its structure before acting. The summary is saved internally; if you then call ai_act, it will be used as the before-state for change comparison. Use this INSTEAD of ai_act if you just want to observe — ai_act is for changing state, not for looking around.",
       inputSchema: {
         sessionId: z.string().describe("Session ID from exploration_start"),
       },
@@ -126,7 +126,7 @@ export function registerExplorationTools(
     {
       title: "AI Act",
       description:
-        "Perform a high-level UI interaction described in natural language. Examples: 'Go back', 'Tap the settings icon', 'Type text in the search box'. After execution, returns a summary of the new page state including whether the action actually changed anything.\n\nIMPORTANT: Use get_page_summary FIRST to check if the page is a fixed single-screen layout. If it is, do NOT request scroll actions — there is nothing to scroll to. Use ai_act only for meaningful interactions (tap, type, swipe between tabs), not for 'look around' or 'scroll to see more'. If the post-action summary reports that the page did not change, stop acting on this page and move on.",
+        "Perform a high-level UI interaction described in natural language. Examples: 'Go back', 'Tap the settings icon', 'Type text in the search box'. After execution, returns a summary of the new page state including whether the action actually changed anything.\n\nIMPORTANT: Use get_page_summary FIRST to check if the page is a fixed single-screen layout. If it is, do NOT request scroll actions — there is nothing to scroll to. Use ai_act only for meaningful interactions (tap, type, swipe between tabs), not for 'look around' or 'scroll to see more'. If the post-action summary reports that the page did not change, stop acting on this page and move on.\n\nNote on before/after comparison: The AI model is stateless — each summary only sees the current screenshot. To detect changes, ai_act internally captures a before-state description (either from your prior get_page_summary call, or by grabbing a quick snapshot before acting) and passes it to the after-summary for comparison. For richer change detection, call get_page_summary before ai_act.",
       inputSchema: {
         sessionId: z.string().describe("Session ID from exploration_start"),
         intent: z.string().describe("Description of what to do"),
