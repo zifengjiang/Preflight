@@ -1,6 +1,6 @@
 {
   "name": "preflite",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Preflight — Local mobile AI testing via MCP. AI-assisted testing on real Android/iOS/Harmony devices.",
   "license": "Apache-2.0",
   "type": "module",
@@ -9,6 +9,8 @@
   },
   "files": [
     "dist/",
+    "docs/visual-flow-ir-llm.md",
+    "scripts/",
     "README.md",
     "LICENSE"
   ],

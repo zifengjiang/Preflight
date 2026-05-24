@@ -5,6 +5,7 @@ import { installLocalRuntime } from "./runtimeInstall.js";
 
 export interface SetupOptions {
   projectRoot: string;
+  runtimeSourceRoot?: string;
   agentBaseUrl?: string;
   livePort?: number;
   installRuntime?: boolean;
@@ -27,7 +28,11 @@ export async function setupLocalMcp(options: SetupOptions): Promise<SetupResult>
   const livePort = options.livePort ?? 18999;
   const shouldInstallRuntime = options.installRuntime ?? true;
   const installedRuntime = shouldInstallRuntime
-    ? await installLocalRuntime({ projectRoot: options.projectRoot, runtimeRoot: options.runtimeRoot })
+    ? await installLocalRuntime({
+        sourceRoot: options.runtimeSourceRoot ?? options.projectRoot,
+        targetProjectRoot: options.projectRoot,
+        runtimeRoot: options.runtimeRoot,
+      })
     : undefined;
   const runtimeRoot = installedRuntime?.runtimeRoot ?? options.runtimeRoot ?? process.env.AGENT_RUNTIME_ROOT?.trim();
   const isRuntime = !!runtimeRoot;
