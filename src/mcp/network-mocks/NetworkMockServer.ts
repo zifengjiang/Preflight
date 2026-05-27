@@ -25,6 +25,8 @@ function findJsonValue(obj: unknown, key: string): unknown {
   return undefined;
 }
 
+function getRuleKey(rule: NetworkMockRule): string { return (rule.urlPattern ?? rule.urlRegex ?? "") ?? rule.urlRegex ?? ""; }
+
 export class NetworkMockServer {
   private server: Server | null = null;
   private rules: NetworkMockRule[] = [];
@@ -42,7 +44,7 @@ export class NetworkMockServer {
     this.certCache.clear();
     this.rootCA = this.loadOrGenerateRootCA();
     for (const rule of rules) {
-      this.callCounts.set(rule.urlPattern, 0);
+      this.callCounts.set((rule.urlPattern ?? rule.urlRegex ?? ""), 0);
     }
     this.mitmHttpServer = createServer((req, res) => {
       // hostname/port are stored on the socket during handleConnectEvent
@@ -161,9 +163,9 @@ export class NetworkMockServer {
       port: this.port,
       mitmEnabled: this.rootCA !== null,
       rules: this.rules.map((rule) => ({
-        urlPattern: rule.urlPattern,
+        urlPattern: (rule.urlPattern ?? rule.urlRegex ?? ""),
         description: rule.description,
-        callCount: this.callCounts.get(rule.urlPattern) ?? 0,
+        callCount: this.callCounts.get((rule.urlPattern ?? rule.urlRegex ?? "")) ?? 0,
       })),
     };
   }
@@ -172,7 +174,7 @@ export class NetworkMockServer {
     this.rules = rules;
     this.callCounts.clear();
     for (const rule of rules) {
-      this.callCounts.set(rule.urlPattern, 0);
+      this.callCounts.set((rule.urlPattern ?? rule.urlRegex ?? ""), 0);
     }
   }
 
@@ -254,10 +256,17 @@ export class NetworkMockServer {
   private findMatch(method: string, url: URL, reqBody?: Record<string, unknown>): NetworkMockResponse | null {
     const urlStr = url.toString();
     for (const rule of this.rules) {
-      if (!urlStr.includes(rule.urlPattern)) continue;
+      if (rule.urlPattern && !urlStr.includes(rule.urlPattern)) continue;
+      if (rule.urlRegex && !new RegExp(rule.urlRegex).test(urlStr)) continue;
+      if (!rule.urlPattern && !rule.urlRegex) continue;
       if (rule.method && rule.method.toUpperCase() !== method.toUpperCase()) continue;
-      const currentCount = (this.callCounts.get(rule.urlPattern) ?? 0) + 1;
-      this.callCounts.set(rule.urlPattern, currentCount);
+      if (rule.queryParams) {
+        let qm = true;
+        for (const [k, v] of Object.entries(rule.queryParams)) { if (url.searchParams.get(k) !== v) { qm = false; break; } }
+        if (!qm) continue;
+      }
+      const currentCount = (this.callCounts.get((rule.urlPattern ?? rule.urlRegex ?? "")) ?? 0) + 1;
+      this.callCounts.set((rule.urlPattern ?? rule.urlRegex ?? ""), currentCount);
       for (const resp of rule.responses) {
         if (resp.callIndex != null && resp.callIndex !== currentCount) continue;
         if (resp.requestBodyMatch && reqBody) {

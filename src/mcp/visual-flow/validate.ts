@@ -61,6 +61,23 @@ function parseScriptVars(raw: unknown): { ok: true; value: VisualFlowScriptVar[]
   return { ok: true, value: out }
 }
 
+function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: true; value: NetworkMockRule } | { ok: false; message: string } {
+  const urlPattern = typeof o.urlPattern === 'string' && o.urlPattern.trim() ? o.urlPattern.trim() : ""
+  const urlRegex = typeof o.urlRegex === 'string' && o.urlRegex.trim() ? o.urlRegex.trim() : ""
+  if (!urlPattern && !urlRegex) return { ok: false, message: `${path}.urlPattern 或 urlRegex 必填其一` }
+  if (urlPattern && urlPattern.length > 1000) return { ok: false, message: `${path}.urlPattern 过长` }
+  if (urlRegex) { try { new RegExp(urlRegex); } catch { return { ok: false, message: `${path}.urlRegex 无效` }; } }
+  const queryParams: Record<string, string> | undefined = o.queryParams != null && typeof o.queryParams === 'object' && !Array.isArray(o.queryParams) ? Object.fromEntries(Object.entries(o.queryParams as Record<string, unknown>).filter(([,v]) => typeof v === 'string').map(([k,v]) => [k, v as string])) : undefined
+  const method = typeof o.method === 'string' ? o.method.trim().toUpperCase() : ''
+  if (method && !['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return { ok: false, message: `${path}.method 须为 GET|POST|PUT|DELETE|PATCH` }
+  if (!Array.isArray(o.responses) || o.responses.length === 0) return { ok: false, message: `${path}.responses 须为非空数组` }
+  if (o.responses.length > 50) return { ok: false, message: `${path}.responses 超过上限 50` }
+  const responses: NetworkMockResponse[] = []; const bodyStr = (b: unknown) => String(b)
+  for (let j = 0; j < o.responses.length; j++) { const rPath = `${path}.responses[${j}]`; const ri = o.responses[j]; if (!ri || typeof ri !== 'object' || Array.isArray(ri)) return { ok: false, message: `${rPath} 须为对象` }; const r = ri as Record<string, unknown>; if (r.body == null) return { ok: false, message: `${rPath}.body 必填` }; const body = bodyStr(r.body); if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }; const status = r.status != null ? Number(r.status) : 200; if (!Number.isFinite(status) || status < 100 || status > 599) return { ok: false, message: `${rPath}.status 须为 100～599` }; const callIndex = r.callIndex != null ? Number(r.callIndex) : undefined; if (callIndex != null && (!Number.isFinite(callIndex) || callIndex < 1)) return { ok: false, message: `${rPath}.callIndex 须为正整数` }; const delay = r.delay != null ? Number(r.delay) : undefined; if (delay != null && (!Number.isFinite(delay) || delay < 0 || delay > 60_000)) return { ok: false, message: `${rPath}.delay 须为 0～60000` }; responses.push({ status: Math.floor(status), body, ...(callIndex != null ? { callIndex: Math.floor(callIndex) } : {}), ...(delay != null ? { delay: Math.floor(delay) } : {}), ...(typeof r.headers === 'object' && r.headers && !Array.isArray(r.headers) && Object.keys(r.headers as object).length > 0 ? { headers: Object.fromEntries(Object.entries(r.headers as Record<string, unknown>).filter(([,v]) => typeof v === 'string').map(([k,v]) => [k, v as string])) } : {}), ...(typeof r.requestBodyMatch === 'object' && r.requestBodyMatch && !Array.isArray(r.requestBodyMatch) && Object.keys(r.requestBodyMatch as object).length > 0 ? { requestBodyMatch: Object.fromEntries(Object.entries(r.requestBodyMatch as Record<string, unknown>).filter(([,v]) => typeof v === 'string').map(([k,v]) => [k, v as string])) } : {}) }) }
+  const description = typeof o.description === 'string' && o.description.trim() ? o.description.trim().slice(0, 500) : undefined
+  return { ok: true, value: { ...(urlPattern ? { urlPattern } : {}), ...(urlRegex ? { urlRegex } : {}), ...(queryParams && Object.keys(queryParams).length > 0 ? { queryParams } : {}), ...(method ? { method: method as NetworkMockRule['method'] } : {}), responses, ...(description ? { description } : {}) } }
+}
+
 function parseNetworkMocks(raw: unknown): { ok: true; value: NetworkMockRule[] } | { ok: false; message: string } {
   if (raw === undefined || raw === null) return { ok: true, value: [] }
   if (!Array.isArray(raw)) return { ok: false, message: 'visualFlow.networkMocks 须为数组' }
@@ -73,9 +90,17 @@ function parseNetworkMocks(raw: unknown): { ok: true; value: NetworkMockRule[] }
       return { ok: false, message: `${path} 须为对象` }
     }
     const o = item as Record<string, unknown>
-    if (!isNonEmptyString(o.urlPattern)) return { ok: false, message: `${path}.urlPattern 必填` }
-    const urlPattern = o.urlPattern.trim()
-    if (urlPattern.length > 1000) return { ok: false, message: `${path}.urlPattern 过长` }
+    const urlPattern = typeof o.urlPattern === 'string' && o.urlPattern.trim() ? o.urlPattern.trim() : ""
+    const urlRegex = typeof o.urlRegex === 'string' && o.urlRegex.trim() ? o.urlRegex.trim() : ""
+    if (!urlPattern && !urlRegex) return { ok: false, message: `${path}.urlPattern 或 urlRegex 必填其一` }
+    if (urlPattern && urlPattern.length > 1000) return { ok: false, message: `${path}.urlPattern 过长` }
+    if (urlRegex) {
+      try { new RegExp(urlRegex); } catch { return { ok: false, message: `${path}.urlRegex 不是有效的正则表达式` }; }
+    }
+    const queryParams: Record<string, string> | undefined =
+      o.queryParams != null && typeof o.queryParams === 'object' && !Array.isArray(o.queryParams)
+        ? Object.fromEntries(Object.entries(o.queryParams as Record<string, unknown>).filter(([, v]) => typeof v === "string").map(([k, v]) => [k, v as string]))
+        : undefined
     const method = typeof o.method === 'string' ? o.method.trim().toUpperCase() : ''
     if (method && !['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
       return { ok: false, message: `${path}.method 须为 GET|POST|PUT|DELETE|PATCH` }
@@ -138,7 +163,9 @@ function parseNetworkMocks(raw: unknown): { ok: true; value: NetworkMockRule[] }
       ? o.description.trim().slice(0, 500)
       : undefined
     out.push({
-      urlPattern,
+      ...(urlPattern ? { urlPattern } : {}),
+      ...(urlRegex ? { urlRegex } : {}),
+      ...(queryParams && Object.keys(queryParams).length > 0 ? { queryParams } : {}),
       ...(method ? { method: method as NetworkMockRule['method'] } : {}),
       responses,
       ...(description ? { description } : {}),
@@ -385,6 +412,21 @@ function parseStep(raw: unknown, path: string): { ok: true; step: VisualStep } |
           ...(str(o.replacement) !== undefined ? { replacement: str(o.replacement)! } : {}),
         },
       }
+    }
+    case 'setMock': {
+      if (!o.rule || typeof o.rule !== 'object' || Array.isArray(o.rule)) {
+        return { ok: false, message: `${path}.rule 须为 NetworkMockRule 对象` };
+      }
+      const mockParsed = parseSingleMockRule(o.rule as Record<string, unknown>, `${path}.rule`);
+      if (!mockParsed.ok) return mockParsed;
+      return { ok: true, step: { type: 'setMock', rule: mockParsed.value } };
+    }
+    case 'removeMock': {
+      if (!isNonEmptyString(o.urlPattern)) return { ok: false, message: `${path}.urlPattern 必填` };
+      return { ok: true, step: { type: 'removeMock', urlPattern: o.urlPattern.trim() } };
+    }
+    case 'clearMocks': {
+      return { ok: true, step: { type: 'clearMocks' } };
     }
     case 'callScript': {
       if (!isNonEmptyString(o.targetTestCaseId)) {

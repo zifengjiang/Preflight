@@ -93,6 +93,12 @@ export type VisualStep =
       pattern?: string
       replacement?: string
     }
+  /** Add or replace a network mock rule during test execution. */
+  | { type: 'setMock'; rule: NetworkMockRule }
+  /** Remove a network mock rule by urlPattern match. */
+  | { type: 'removeMock'; urlPattern: string }
+  /** Clear all network mock rules. */
+  | { type: 'clearMocks' }
   /**
    * 调用另一条测试用例：优先展开其 `visualFlow`（与当前脚本共享 `__flowStep` 序号链）；
    * 若无有效编排则内联其 `scriptContent`（变量由脚本顶部注入的 `__FLOW_DATA` / `__scoped` 等提供）。
@@ -134,7 +140,11 @@ export interface NetworkMockRule {
    * Substring to match against the full request URL.
    * The first rule whose urlPattern is a substring of the request URL wins.
    */
-  urlPattern: string
+  urlPattern?: string
+  /** Regex pattern to match against the full request URL. Overrides urlPattern if both set. */
+  urlRegex?: string
+  /** Key-value pairs that must be present in the request URL query string. */
+  queryParams?: Record<string, string>
   /** HTTP method to match (default: matches any method) */
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
   /** Ordered response variants. The first matching response is returned. */

@@ -38,6 +38,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
   const liveBaseUrl = `http://127.0.0.1:${livePort}`;
   const runManager = new RunManager(client, liveBaseUrl);
   const networkMockService = new NetworkMockService();
+  const mockRuns = new Set<string>(); // runIds where mocks were auto-started
   let liveServerStarted: Promise<void> | undefined;
 
   const server = new McpServer({ name: "Preflight", version: "0.1.0" });
@@ -292,9 +293,14 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     },
     async ({ runId, waitForCompletion, timeoutMs, minIntervalMs }) => {
       await runtime.ensureStarted();
-      return jsonResult(
-        waitForCompletion ? await runManager.waitForRun(runId, timeoutMs ?? 120_000, 2_000) : await runManager.watchRun(runId, minIntervalMs),
-      );
+      const summary = waitForCompletion
+        ? await runManager.waitForRun(runId, timeoutMs ?? 120_000, 2_000)
+        : await runManager.watchRun(runId, minIntervalMs);
+      // Auto-cleanup mocks on terminal state
+      if (["SUCCESS", "FAILED", "CANCELLED"].includes(summary.status) && networkMockService.isRunning()) {
+        try { await networkMockService.stop(); } catch { /* cleanup */ }
+      }
+      return jsonResult(summary);
     },
   );
 

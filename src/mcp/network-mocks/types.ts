@@ -3,7 +3,8 @@ import type { NetworkMockRule } from "../visual-flow/types.js";
 export type { NetworkMockRule, NetworkMockResponse } from "../visual-flow/types.js";
 
 export interface NetworkMockRuleStats {
-  urlPattern: string;
+  urlPattern?: string;
+  urlRegex?: string;
   description?: string;
   callCount: number;
 }
