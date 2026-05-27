@@ -1,0 +1,35 @@
+src/mcp/network-mocks/NetworkMockServer.ts
+  8ef42d0dbdc414b2 28-29,47,166,168,177,259-261,263-269
+docs/network-mocks.md
+  8ef42d0dbdc414b2 1-155
+src/mcp/server.ts
+  8ef42d0dbdc414b2 41,296-303
+src/mcp/network-mocks/types.ts
+  8ef42d0dbdc414b2 6-7
+src/mcp/visual-flow/types.ts
+  8ef42d0dbdc414b2 96-101,143-147
+src/mcp/network-mocks/NetworkMockService.ts
+  8ef42d0dbdc414b2 5-7,19-21,36,49,54-135
+src/mcp/visual-flow/validate.ts
+  8ef42d0dbdc414b2 64-80,93-103,166-168,416-430
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3cd4339ea7b9f391cad7bb83383b94da68aacf07",
+  "prompts": {
+    "8ef42d0dbdc414b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6882e7ef-1aeb-478a-88da-2c443da0679d",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 207,
+      "total_deletions": 47,
+      "accepted_lines": 331,
+      "overriden_lines": 0
+    }
+  }
+}
