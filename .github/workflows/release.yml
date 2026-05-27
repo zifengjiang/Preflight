@@ -21,7 +21,16 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org/
       - run: npm install && npm test && npm run build
-      - run: npm publish
+      - name: Determine npm tag
+        id: tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "tag=$(echo "$VERSION" | sed 's/.*-\([a-z]*\).*/\1/')" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm publish --tag ${{ steps.tag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
