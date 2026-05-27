@@ -9,8 +9,9 @@
 
 | 字段           | 必填  | 说明                                   |
 | ------------ | --- | ------------------------------------ |
-| `version`    | 是   | 固定为数字 `1`，其它值保存失败。                   |
+| `version`    | 是   | 固定为数字 `2`，其它值保存失败。                   |
 | `scriptVars` | 否   | 执行前由人填的变量声明数组；步骤文案里用 `{{变量名}}` 引用。   |
+| `networkMocks` | 否   | 网络 mock 规则数组，在测试开始前启动代理并配置到设备。每条规则描述一个 API 的 URL 匹配与 mock 响应序列。 |
 | `steps`      | 是   | 顶层步骤数组，按顺序执行；**展开后总条数 ≤ 500**（含子步骤）。 |
 
 
@@ -24,6 +25,70 @@
 | `defaultValue` | 否   | 默认填值，字符串。                          |
 | `scope`        | 否   | `global`、`local` 或 `temp`；缺省按平台约定。 |
 
+
+### 1.2 `networkMocks[]` 每项
+
+| 字段           | 必填  | 说明                                   |
+| -------------- | --- | -------------------------------------- |
+| `urlPattern`   | 是   | 请求 URL 的子串匹配（`includes` 语义）。首个匹配的规则生效。 |
+| `method`       | 否   | HTTP 方法：`GET`、`POST`、`PUT`、`DELETE` 或 `PATCH`。不填则匹配任意方法。 |
+| `responses`    | 是   | 非空响应序列数组，按顺序匹配第一项满足条件的响应。 |
+| `description`  | 否   | 给人看的说明。 |
+
+#### `responses[]` 每项
+
+| 字段               | 必填  | 说明                                   |
+| ------------------ | --- | -------------------------------------- |
+| `body`             | 是   | 响应体字符串（通常为 JSON）。上限 1MB。 |
+| `status`           | 否   | HTTP 状态码，默认 200。范围 100～599。 |
+| `callIndex`        | 否   | 仅第 n 次调用时匹配（1-based）。用于实现状态性 mock：首次返回错误，二次返回成功。 |
+| `requestBodyMatch` | 否   | 键值对映射，必须在请求体的 JSON 中存在且值匹配才会命中。 |
+| `headers`          | 否   | 额外的响应头。Content-Type 默认为 `application/json; charset=utf-8`。 |
+| `delay`            | 否   | 响应延迟毫秒数。范围 0～60000。 |
+
+#### 匹配规则
+
+1. 遍历 `networkMocks`，找到第一条 `urlPattern` 是请求 URL 子串的规则。
+2. 递增该规则的调用计数器。
+3. 按顺序遍历 `responses`，找到第一项满足 `callIndex` 和 `requestBodyMatch` 的响应并返回。
+4. 若无匹配响应或请求不匹配任何规则，透明转发到真实服务器。
+
+#### 示例
+
+```json
+{
+  "networkMocks": [
+    {
+      "urlPattern": "getMafangRosterNewFlowSwitch",
+      "description": "启用码放新流程",
+      "responses": [
+        {
+          "status": 200,
+          "body": "{\"code\":200,\"data\":{\"newFlowEnabled\":true},\"subcode\":200}"
+        }
+      ]
+    },
+    {
+      "urlPattern": "copyWorkScheduleGroup",
+      "method": "POST",
+      "description": "日复制先弹确认再成功",
+      "responses": [
+        {
+          "callIndex": 1,
+          "status": 200,
+          "body": "{\"code\":\"WORK_SCHEDULE_PARTITION_MAFANG_COPY_SKIP_CONFIRM\",\"data\":{\"blockedCount\":2}}"
+        },
+        {
+          "callIndex": 2,
+          "requestBodyMatch": {"mafangSkipConfirmed": "true"},
+          "status": 200,
+          "body": "{\"code\":200,\"data\":{\"flag\":true}}"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ---
 
@@ -100,7 +165,10 @@
 
 ## 4. 易错校验（生成后自查）
 
-- `version !== 1` → 失败。
+- `version !== 2` → 失败。
+- `networkMocks` 超过 50 条规则或单条规则的 `responses` 超过 50 项 → 失败。
+- `networkMocks[].urlPattern` 为空或过长（>1000）→ 失败。
+- `networkMocks[].responses` 为空数组 → 失败。
 - `if` / `ifDeviceType` 的 `thenSteps` 为空，或 `whileLoop` / `forLoop` 的 `bodySteps` 为空 → 失败。
 - `sleep.ms`、`whileLoop.maxIterations`、`forLoop.count` 超出上表范围 → 失败。
 - `callScript.targetTestCaseId` 非 24 位 hex，或 `scopeId` 不符合 `sub`+12hex → 失败。

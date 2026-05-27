@@ -2,7 +2,7 @@
  * 可视化编排 IR（与 Midscene 业务脚本双写：存库 + 生成 `scriptContent`）。
  * 版本字段便于后续迁移；步骤与 {@link generateScriptFromVisualFlow} 对齐。
  */
-export const VISUAL_FLOW_VERSION = 1 as const
+export const VISUAL_FLOW_VERSION = 2 as const
 
 export type VisualFlowScriptVar = {
   /** 执行前输入变量名；可被当前脚本及子脚本绑定值中的 `{{name}}` 引用 */
@@ -108,8 +108,49 @@ export type VisualStep =
       varBindings: Record<string, string>
     }
 
+export interface NetworkMockResponse {
+  /** HTTP status code (default: 200) */
+  status?: number
+  /** Response body, typically a JSON string */
+  body: string
+  /**
+   * Key-value pairs that must be present (with matching values) in the JSON
+   * request body for this response to match. Omit to match any body.
+   */
+  requestBodyMatch?: Record<string, string>
+  /**
+   * Only apply on the nth matching call to this URL pattern (1-based).
+   * Enables stateful sequences: first call returns an error, second succeeds, etc.
+   */
+  callIndex?: number
+  /** Optional response headers */
+  headers?: Record<string, string>
+  /** Delay in ms before responding (simulates network latency) */
+  delay?: number
+}
+
+export interface NetworkMockRule {
+  /**
+   * Substring to match against the full request URL.
+   * The first rule whose urlPattern is a substring of the request URL wins.
+   */
+  urlPattern: string
+  /** HTTP method to match (default: matches any method) */
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+  /** Ordered response variants. The first matching response is returned. */
+  responses: NetworkMockResponse[]
+  /** Human-readable description */
+  description?: string
+}
+
 export interface VisualFlowDocument {
   version: typeof VISUAL_FLOW_VERSION
   scriptVars?: VisualFlowScriptVar[]
   steps: VisualStep[]
+  /**
+   * Network mock rules applied before the test runs.
+   * Matching HTTP requests are intercepted and return mock responses;
+   * non-matching traffic is forwarded transparently.
+   */
+  networkMocks?: NetworkMockRule[]
 }

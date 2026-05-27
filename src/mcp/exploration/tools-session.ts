@@ -86,6 +86,7 @@ export async function ensureIosWdaStarted(
     const child = spawn("/bin/bash", [scriptPath, udid, String(port)], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120_000,
+      env: { ...process.env, ...runtimeEnv },
     });
 
     let stdout = "";

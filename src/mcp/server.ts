@@ -13,6 +13,9 @@ import { loadPreflightUserConfig } from "./userConfig.js";
 import { compileVisualFlow, validateVisualFlow } from "./visual-flow/index.js";
 import { registerExplorationTools } from "./exploration/index.js";
 import { createMidsceneSessionFromResourceId, ensureIosWdaStarted } from "./exploration/tools-session.js";
+import { NetworkMockService } from "./network-mocks/NetworkMockService.js";
+import { proxyHostForPlatform } from "./network-mocks/device-proxy.js";
+import type { NetworkMockRule } from "./visual-flow/types.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -34,6 +37,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
   const runtime = new AgentRuntimeManager({ projectRoot, agentBaseUrl, client, env: process.env, runtimeRoot: options.runtimeRoot, loadConfigEnv });
   const liveBaseUrl = `http://127.0.0.1:${livePort}`;
   const runManager = new RunManager(client, liveBaseUrl);
+  const networkMockService = new NetworkMockService();
   let liveServerStarted: Promise<void> | undefined;
 
   const server = new McpServer({ name: "Preflight", version: "0.1.0" });
@@ -201,6 +205,27 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       await runtime.ensureStarted();
       const parsed = validateVisualFlow(input.visualFlow);
       if (!parsed.ok) return jsonResult(parsed);
+      const hasNetworkMocks = (parsed.value.networkMocks?.length ?? 0) > 0;
+      let mocksStarted = false;
+      if (hasNetworkMocks && input.resourceId) {
+        const deviceId = input.resourceId.includes(":") ? input.resourceId.split(":")[1]! : input.resourceId;
+        const platform = input.platform.toLowerCase() as "android" | "ios";
+        try {
+          await networkMockService.start({
+            rules: parsed.value.networkMocks!,
+            platform,
+            deviceId,
+          });
+          mocksStarted = true;
+        } catch (err) {
+          return jsonResult({
+            ok: false,
+            message: `启动网络 mock 失败: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      } else if (hasNetworkMocks && !input.resourceId) {
+        // Mocks defined but no device — note for manual setup
+      }
       liveServerStarted ??= startLiveViewer(livePort, runManager).then((viewer) => {
         runManager.setLiveBaseUrl(viewer.baseUrl);
       });
@@ -216,8 +241,18 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         runtimeEnv: { ...preflightRunDefaults(), ...(await loadConfigEnv()), ...input.runtimeEnv },
         visualFlow: parsed.value,
       });
-      if (!input.waitForCompletion) return jsonResult({ ...started, visualFlow: parsed.value });
-      return jsonResult(await runManager.waitForRun(started.runId, input.timeoutMs ?? 120_000, 2_000));
+      if (!input.waitForCompletion) {
+        return jsonResult({
+          ...started,
+          visualFlow: parsed.value,
+          ...(mocksStarted ? { networkMocksActive: true } : {}),
+        });
+      }
+      const result = await runManager.waitForRun(started.runId, input.timeoutMs ?? 120_000, 2_000);
+      if (mocksStarted) {
+        try { await networkMockService.stop(); } catch { /* cleanup */ }
+      }
+      return jsonResult(result);
     },
   );
 
@@ -276,7 +311,12 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     },
     async ({ runId, reason }) => {
       await runtime.ensureStarted();
-      return jsonResult(await runManager.cancelRun(runId, "model", reason ?? "no reason given"));
+      const result = await runManager.cancelRun(runId, "model", reason ?? "no reason given");
+      // Clean up network mocks if they were auto-started for this run
+      if (networkMockService.isRunning()) {
+        try { await networkMockService.stop(); } catch { /* cleanup */ }
+      }
+      return jsonResult(result);
     },
   );
 
@@ -326,6 +366,212 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     },
   );
 
+  server.registerTool(
+    "start_network_mocks",
+    {
+      title: "Start Network Mocks",
+      description:
+        "Start the network mock HTTP/HTTPS proxy server and configure the device to route traffic through it. " +
+        "Matching requests return mock responses; non-matching traffic is forwarded transparently. " +
+        "Automatically generates a Root CA certificate for HTTPS MITM interception. " +
+        "Use before a test run to mock API responses that the app depends on. " +
+        "Currently supports Android emulator (iOS simulator deferred to phase 2).",
+      inputSchema: {
+        platform: z.enum(["ANDROID", "IOS"]).describe("Device platform"),
+        resourceId: z.string().describe("Device resource ID from list_devices (e.g., android:emulator-5554)"),
+        port: z.number().int().positive().optional().describe("Preferred port (e.g., to match existing device proxy config)"),
+        rules: z.array(z.object({
+          urlPattern: z.string().describe("Substring to match against the full request URL"),
+          method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).optional().describe("HTTP method to match (default: any)"),
+          responses: z.array(z.object({
+            status: z.number().int().min(100).max(599).optional().describe("HTTP status code (default: 200)"),
+            body: z.string().describe("Response body, typically a JSON string"),
+            requestBodyMatch: z.record(z.string()).optional().describe("Key-value pairs that must match in the request body"),
+            callIndex: z.number().int().positive().optional().describe("Only match on the nth call (1-based, for stateful sequences)"),
+            headers: z.record(z.string()).optional().describe("Optional response headers"),
+            delay: z.number().int().min(0).optional().describe("Delay in ms before responding"),
+          })),
+          description: z.string().optional().describe("Human-readable description"),
+        })),
+      },
+    },
+    async (input) => {
+      await runtime.ensureStarted();
+      const platform = input.platform.toLowerCase() as "android" | "ios";
+      const deviceId = input.resourceId.includes(":") ? input.resourceId.split(":")[1]! : input.resourceId;
+      const rules: NetworkMockRule[] = input.rules.map((r) => ({
+        urlPattern: r.urlPattern,
+        ...(r.method ? { method: r.method } : {}),
+        responses: r.responses.map((resp) => ({
+          ...(resp.status != null ? { status: resp.status } : {}),
+          body: resp.body,
+          ...(resp.requestBodyMatch ? { requestBodyMatch: resp.requestBodyMatch } : {}),
+          ...(resp.callIndex != null ? { callIndex: resp.callIndex } : {}),
+          ...(resp.headers ? { headers: resp.headers } : {}),
+          ...(resp.delay != null ? { delay: resp.delay } : {}),
+        })),
+        ...(r.description ? { description: r.description } : {}),
+      }));
+      return jsonResult(await networkMockService.start({ rules, platform, deviceId, preferredPort: input.port }));
+    },
+  );
+
+  server.registerTool(
+    "stop_network_mocks",
+    {
+      title: "Stop Network Mocks",
+      description:
+        "Stop the network mock server and remove device proxy configuration. " +
+        "Call this after the test completes to restore normal network traffic.",
+    },
+    async () => jsonResult(await networkMockService.stop()),
+  );
+
+  server.registerTool(
+    "get_network_mock_status",
+    {
+      title: "Get Network Mock Status",
+      description:
+        "Get the current network mock server status and per-rule call statistics. " +
+        "Use to verify that mocks are being hit as expected during a test.",
+    },
+    async () => jsonResult(networkMockService.getStats()),
+  );
+
+  server.registerTool(
+    "update_network_mock_rules",
+    {
+      title: "Update Network Mock Rules",
+      description:
+        "Hot-reload mock rules without stopping the server. " +
+        "Use to change mock responses mid-test without restarting the proxy.",
+      inputSchema: {
+        rules: z.array(z.object({
+          urlPattern: z.string(),
+          method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).optional(),
+          responses: z.array(z.object({
+            status: z.number().int().min(100).max(599).optional(),
+            body: z.string(),
+            requestBodyMatch: z.record(z.string()).optional(),
+            callIndex: z.number().int().positive().optional(),
+            headers: z.record(z.string()).optional(),
+            delay: z.number().int().min(0).optional(),
+          })),
+          description: z.string().optional(),
+        })),
+      },
+    },
+    async ({ rules }) => {
+      const parsed: NetworkMockRule[] = rules.map((r) => ({
+        urlPattern: r.urlPattern,
+        ...(r.method ? { method: r.method } : {}),
+        responses: r.responses.map((resp) => ({
+          ...(resp.status != null ? { status: resp.status } : {}),
+          body: resp.body,
+          ...(resp.requestBodyMatch ? { requestBodyMatch: resp.requestBodyMatch } : {}),
+          ...(resp.callIndex != null ? { callIndex: resp.callIndex } : {}),
+          ...(resp.headers ? { headers: resp.headers } : {}),
+          ...(resp.delay != null ? { delay: resp.delay } : {}),
+        })),
+        ...(r.description ? { description: r.description } : {}),
+      }));
+      networkMockService.updateRules(parsed);
+      return jsonResult({ ok: true, updated: parsed.length });
+    },
+  );
+
+  server.registerTool(
+    "get_root_ca_cert",
+    {
+      title: "Get Root CA Certificate",
+      description:
+        "Export the Preflight MITM Root CA certificate (PEM format). " +
+        "Install this certificate on your iOS/Android device to enable HTTPS interception. " +
+        "iOS: Send the cert to the device (e.g. AirDrop), open it, go to Settings > Profile Downloaded > Install. " +
+        "Then Settings > General > About > Certificate Trust Settings > Enable full trust for 'Preflight Mock CA'. " +
+        "Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate. " +
+        "Only available when network mocks are running.",
+    },
+    async () => {
+      const cert = networkMockService.getRootCACert();
+      if (!cert) return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
+      return { content: [{ type: "text" as const, text: cert }] };
+    },
+  );
+
+  server.registerTool(
+    "get_mobile_config",
+    {
+      title: "Get iOS Mobile Config",
+      description:
+        "Generate an iOS .mobileconfig profile that installs the CA certificate AND configures the WiFi proxy " +
+        "in one step. Send this file to the iOS device (e.g. AirDrop), open it to install. " +
+        "After installation, go to Settings > General > About > Certificate Trust Settings > enable 'Preflight Mock CA'. " +
+        "The proxy host will be auto-detected as this machine's local IP. " +
+        "Only available when network mocks are running.",
+    },
+    async () => {
+      if (!networkMockService.isRunning()) {
+        return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
+      }
+      const port = networkMockService.getStats().port;
+      if (!port) return jsonResult({ ok: false, message: "mock server port unknown" });
+      const proxyHost = proxyHostForPlatform("ios") === "127.0.0.1" ? "172.23.166.53" : proxyHostForPlatform("ios");
+      const config = networkMockService.generateMobileConfig(proxyHost, port);
+      if (!config) return jsonResult({ ok: false, message: "failed to generate mobileconfig" });
+      return { content: [{ type: "text" as const, text: config }] };
+    },
+  );
+
+  server.registerTool(
+    "start_recording",
+    {
+      title: "Start Network Recording",
+      description:
+        "Start recording network traffic through the mock proxy. All requests and responses are captured " +
+        "and can be exported as mock rules via export_recorded_rules. Network mocks must already be running.",
+    },
+    async () => {
+      if (!networkMockService.isRunning()) {
+        return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
+      }
+      networkMockService.setRecording(true);
+      return jsonResult({ ok: true, message: "Recording started" });
+    },
+  );
+
+  server.registerTool(
+    "stop_recording",
+    {
+      title: "Stop Network Recording",
+      description: "Stop recording and return the count of captured requests.",
+    },
+    async () => {
+      if (!networkMockService.isRunning()) {
+        return jsonResult({ ok: false, message: "network mocks not running" });
+      }
+      const count = networkMockService.getRecordedCount();
+      networkMockService.setRecording(false);
+      return jsonResult({ ok: true, recorded: count });
+    },
+  );
+
+  server.registerTool(
+    "export_recorded_rules",
+    {
+      title: "Export Recorded Rules",
+      description:
+        "Export recorded network traffic as NetworkMockRule[]. " +
+        "Duplicated URLs are merged, request bodies generate requestBodyMatch rules, " +
+        "and sequential responses are assigned callIndex. " +
+        "Use after stop_recording to convert captured traffic into reusable mock rules.",
+    },
+    async () => {
+      const rules = networkMockService.exportRecordedRules();
+      return jsonResult({ ok: true, count: rules.length, rules });
+    },
+  );
+
   registerExplorationTools(server, { client, loadConfigEnv, ensureAgentStarted: async () => { await runtime.ensureStarted(); }, createSessionFromMeta: createMidsceneSessionFromResourceId, projectRoot });
 
   return server;
@@ -346,6 +592,7 @@ function preflightRunDefaults(): Record<string, string> {
     MIDSCENE_RECORD_VIDEO_CRF: "32",
     MIDSCENE_RECORD_VIDEO_PRESET: "fast",
     MIDSCENE_RUN_TIMEOUT_MS: "1200000",  // 20分钟，适配多步骤流程
+    MIDSCENE_REPLANNING_CYCLE_LIMIT: "10",  // 避免死循环
   };
 }
 
