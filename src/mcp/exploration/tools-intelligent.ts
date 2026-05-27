@@ -69,19 +69,70 @@ async function detectForegroundApp(
 }
 
 // ---------------------------------------------------------------------------
+// Safe aiAsk: uses aiQuery under the hood to avoid doubao key-mismatch errors
+// ---------------------------------------------------------------------------
+
+async function aiAskSafe(
+  session: MidsceneSession,
+  prompt: string,
+): Promise<string> {
+  const result = await session.agent.aiQuery<any>(`${prompt}, string`);
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object") {
+    const values = Object.values(result);
+    const firstString = values.find((v) => typeof v === "string");
+    if (firstString) return firstString as string;
+    return JSON.stringify(result);
+  }
+  return String(result);
+}
+
+// ---------------------------------------------------------------------------
+// Retry wrapper for transient Midscene model errors
+// ---------------------------------------------------------------------------
+
+const RETRY_MAX = 3;
+const RETRY_DELAY_MS = 2000;
+
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= RETRY_MAX; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const retryable =
+        msg.includes("No result in query data") ||
+        msg.includes("BadRequestError") ||
+        msg.includes("RateLimitError") ||
+        msg.includes("ServiceUnavailableError") ||
+        msg.includes("InternalServerError");
+      if (!retryable || attempt === RETRY_MAX) throw err;
+      // Midscene model偶发错误，短暂延迟后重试
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+    }
+  }
+  throw lastError;
+}
+
+// ---------------------------------------------------------------------------
 // Tool handlers
 // ---------------------------------------------------------------------------
 
 export function getPageSummaryHandler(ctx: ExplorationToolContext) {
   return async (input: { sessionId: string }): Promise<unknown> => {
     const session = await resolveSession(input.sessionId, ctx);
-    const summary = await session.agent.aiAsk(
-      "详细描述当前页面。请按从上到下的顺序列出所有可见区域、交互元素和文案。\n" +
-      "特别注意：\n" +
-      "1) 页面底部是否有更多内容（是否可滚动）？如果底部紧贴导航栏/状态栏则说明是固定单屏布局\n" +
-      "2) 是否有弹窗、广告或遮挡物？\n" +
-      "3) 整体布局类型：固定单屏 / 可滚动长页面 / 多Tab / 列表\n" +
-      "先判断布局类型，再逐一描述每个区域的内容。",
+    const summary = await withRetry(
+      () => aiAskSafe(session,
+        "详细描述当前页面。请按从上到下的顺序列出所有可见区域、交互元素和文案。\n" +
+        "特别注意：\n" +
+        "1) 页面底部是否有更多内容（是否可滚动）？如果底部紧贴导航栏/状态栏则说明是固定单屏布局\n" +
+        "2) 是否有弹窗、广告或遮挡物？\n" +
+        "3) 整体布局类型：固定单屏 / 可滚动长页面 / 多Tab / 列表\n" +
+        "先判断布局类型，再逐一描述每个区域的内容。",
+      ),
+      "getPageSummary",
     );
 
     const state = getSession(input.sessionId);
@@ -106,7 +157,7 @@ export function getPageSummaryHandler(ctx: ExplorationToolContext) {
 export function askAboutScreenHandler(ctx: ExplorationToolContext) {
   return async (input: { sessionId: string; question: string }): Promise<unknown> => {
     const session = await resolveSession(input.sessionId, ctx);
-    const answer = await session.agent.aiAsk(input.question);
+    const answer = await withRetry(() => aiAskSafe(session, input.question), "askAboutScreen");
     return { answer };
   };
 }
@@ -117,21 +168,27 @@ export function aiActHandler(ctx: ExplorationToolContext) {
     const state = getSession(input.sessionId);
 
     // Before-state: reuse from get_page_summary if available, otherwise grab a quick one
-    const beforeSummary = state.lastPageSummary ?? await session.agent.aiAsk(
-      "用一句话描述当前页面的最关键特征：什么类型的页面（列表/表单/弹窗/首页等），最显著的内容是什么。",
+    const beforeSummary = state.lastPageSummary ?? await withRetry(
+      () => aiAskSafe(session,
+        "用一句话描述当前页面的最关键特征：什么类型的页面（列表/表单/弹窗/首页等），最显著的内容是什么。",
+      ),
+      "aiAct.beforeSummary",
     );
 
-    await session.agent.aiAct(input.intent);
+    await withRetry(() => session.agent.aiAct(input.intent), "aiAct");
 
-    const afterSummary = await session.agent.aiAsk(
-      `操作前的页面：${beforeSummary}\n` +
-      `执行的操作：${input.intent}\n` +
-      "请判断操作结果：\n" +
-      "1) 页面内容是否发生了变化？（进入了新页面、弹出弹窗、滚动到底部、输入框获得焦点等）\n" +
-      "2) 如果操作是滑动，是否已到达底部或页面没有变化？\n" +
-      "3) 当前页面布局类型是固定单屏还是可滚动长页面？\n" +
-      "4) 当前页面最关键的变化是什么？\n" +
-      "如果操作没有产生任何实际变化（比如反复滑动但没有新内容），请明确指出\"页面没有变化\"。",
+    const afterSummary = await withRetry(
+      () => aiAskSafe(session,
+        `操作前的页面：${beforeSummary}\n` +
+        `执行的操作：${input.intent}\n` +
+        "请判断操作结果：\n" +
+        "1) 页面内容是否发生了变化？（进入了新页面、弹出弹窗、滚动到底部、输入框获得焦点等）\n" +
+        "2) 如果操作是滑动，是否已到达底部或页面没有变化？\n" +
+        "3) 当前页面布局类型是固定单屏还是可滚动长页面？\n" +
+        "4) 当前页面最关键的变化是什么？\n" +
+        "如果操作没有产生任何实际变化（比如反复滑动但没有新内容），请明确指出\"页面没有变化\"。",
+      ),
+      "aiAct.afterSummary",
     );
 
     // Update for next aiAct call
