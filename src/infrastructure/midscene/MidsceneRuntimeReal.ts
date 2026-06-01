@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -667,9 +667,42 @@ export class MidsceneRuntimeReal implements MidsceneRuntime {
       }
     }
 
+    let stepFailureMessage: string | undefined;
+    if (reportPaths && result.ok) {
+      const execDir = reportPaths.bundleDir ?? path.dirname(reportPaths.reportHtmlPath);
+      try {
+        const dirEntries = await readdir(execDir);
+        for (const name of dirEntries) {
+          if (!/^\d+\.execution\.json$/.test(name)) continue;
+          try {
+            const raw = await readFile(path.join(execDir, name), "utf8");
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            const executions = parsed.executions;
+            if (!Array.isArray(executions)) continue;
+            for (const exec of executions) {
+              if (!exec || typeof exec !== "object") continue;
+              const tasks = (exec as Record<string, unknown>).tasks;
+              if (!Array.isArray(tasks)) continue;
+              for (const task of tasks) {
+                if (task && typeof task === "object" && (task as Record<string, unknown>).status === "failed") {
+                  const msg = (task as Record<string, unknown>).errorMessage;
+                  stepFailureMessage = typeof msg === "string" && msg.trim() ? msg.trim() : "midscene step execution failed";
+                }
+              }
+            }
+          } catch {
+            // skip unparseable files
+          }
+        }
+      } catch {
+        // directory not found or unreadable
+      }
+    }
+
+    const ok = result.ok && stepFailureMessage === undefined;
     return {
-      ok: result.ok,
-      message: result.ok ? "midscene real execution success" : result.stderr || "midscene execution failed",
+      ok,
+      message: stepFailureMessage ?? (result.ok ? "midscene real execution success" : result.stderr || "midscene execution failed"),
       artifacts,
       reportInfo,
     };
