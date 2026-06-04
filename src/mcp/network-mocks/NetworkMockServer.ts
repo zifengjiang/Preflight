@@ -316,8 +316,10 @@ export class NetworkMockServer {
     const port = Number.parseInt(portStr, 10) || 443;
     if (!hostname) { sock.write("HTTP/1.1 400 Bad Request\r\n\r\n"); sock.destroy(); return; }
 
-    // Skip MITM for Apple captive-portal detection & connectivity checks
-    if (this.shouldSkipMitm(hostname)) {
+    // Skip MITM for connectivity-check domains and non-mocked hosts.
+    // Only MITM connections whose hostname matches at least one mock rule;
+    // everything else tunnels through so the device stays online.
+    if (this.shouldSkipMitm(hostname) || !this.hostnameMatchesAnyRule(hostname)) {
       this.tunnelConnect(sock, hostname, port);
       return;
     }
@@ -422,9 +424,19 @@ export class NetworkMockServer {
     }, 30_000);
   }
 
+  private hostnameMatchesAnyRule(hostname: string): boolean {
+    // Construct a synthetic full URL so we can reuse the same pattern matching as findMatch.
+    const syntheticUrl = `https://${hostname}/`;
+    return this.rules.some((rule) => {
+      if (rule.urlPattern && syntheticUrl.includes(rule.urlPattern)) return true;
+      if (rule.urlRegex && new RegExp(rule.urlRegex).test(syntheticUrl)) return true;
+      return false;
+    });
+  }
+
   private shouldSkipMitm(hostname: string): boolean {
-    // Apple captive portal detection and connectivity checks — must passthrough
-    const passthroughSuffixes = [
+    const passthroughDomains = [
+      // Apple
       ".apple.com",
       ".icloud.com",
       "captive.apple.com",
@@ -432,8 +444,17 @@ export class NetworkMockServer {
       "gsp11-ssl.apple.com",
       "gsp12-ssl.apple.com",
       "gsp13-ssl.apple.com",
+      // Android connectivity checks
+      "connectivitycheck.gstatic.com",
+      "connectivitycheck.android.com",
+      "play.googleapis.com",
+      "www.googleapis.com",
+      "clients3.google.com",
+      // Google captive portal / connectivity
+      "google.com",
+      ".google.com",
     ];
-    return passthroughSuffixes.some((s) => hostname === s || hostname.endsWith(s));
+    return passthroughDomains.some((s) => hostname === s || hostname.endsWith(s));
   }
 
   // ── Certificate generation (openssl CLI) ──
