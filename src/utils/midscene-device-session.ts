@@ -19,6 +19,7 @@ const execFileAsync = promisify(execFile)
 
 const REPLAN_CYCLE_LIMIT = 40
 const WAIT_AFTER_ACTION = 2000
+const REFLECTION_INTERVAL = 5
 type DeviceRow = {
   serial: string
   state: string
@@ -374,6 +375,7 @@ async function createAndroidSession(opts: AndroidSessionOptions): Promise<Androi
     reportFileName: opts.reportFileName,
     replanningCycleLimit: REPLAN_CYCLE_LIMIT,
     waitAfterAction: WAIT_AFTER_ACTION,
+    reflectionInterval: REFLECTION_INTERVAL,
     ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
     persistExecutionDump: true,
     ...(taskCache ? { cache: taskCache } : {}),
@@ -409,6 +411,7 @@ async function createIosSession(opts: IosSessionOptions): Promise<IosSession> {
     reportFileName: opts.reportFileName,
     replanningCycleLimit: REPLAN_CYCLE_LIMIT,
     waitAfterAction: WAIT_AFTER_ACTION,
+    reflectionInterval: REFLECTION_INTERVAL,
     ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
     persistExecutionDump: true,
     ...(taskCache ? { cache: taskCache } : {}),
@@ -490,6 +493,7 @@ async function createHarmonySession(opts: HarmonySessionOptions): Promise<Harmon
     aiActContext: opts.aiActContext ?? DEFAULT_AI_CONTEXT,
     replanningCycleLimit: REPLAN_CYCLE_LIMIT,
     waitAfterAction: WAIT_AFTER_ACTION,
+    reflectionInterval: REFLECTION_INTERVAL,
     ...(opts.reportFileName ? { reportFileName: opts.reportFileName } : {}),
     ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
     persistExecutionDump: true,
