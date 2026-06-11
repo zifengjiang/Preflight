@@ -1,0 +1,23 @@
+.github/workflows/release.yml
+  8ef42d0dbdc414b2 24-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "491d6edf7ce478b5379efb48ca2772dd4bb4a1f9",
+  "prompts": {
+    "8ef42d0dbdc414b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6882e7ef-1aeb-478a-88da-2c443da0679d",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 1,
+      "accepted_lines": 142,
+      "overriden_lines": 0
+    }
+  }
+}
