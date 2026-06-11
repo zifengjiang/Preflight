@@ -1,0 +1,23 @@
+package.json
+  3bcfdc4645b40f5d 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e65317d125fc5917262163bbe85833d824c10d8f",
+  "prompts": {
+    "3bcfdc4645b40f5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e52da7dd-b80e-4960-8f58-bd498c5b2e50",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 1246,
+      "total_deletions": 325,
+      "accepted_lines": 1050,
+      "overriden_lines": 0
+    }
+  }
+}
