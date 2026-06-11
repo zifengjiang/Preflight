@@ -19,6 +19,9 @@ import type { NetworkMockRule } from "./visual-flow/types.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+const MCP_SAFE_WAIT_MS = 45_000;
+const RUN_POLL_INTERVAL_MS = 2_000;
+
 export interface PreflightMcpOptions {
   agentBaseUrl?: string;
   agentToken?: string;
@@ -38,7 +41,6 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
   const liveBaseUrl = `http://127.0.0.1:${livePort}`;
   const runManager = new RunManager(client, liveBaseUrl);
   const networkMockService = new NetworkMockService();
-  const mockRuns = new Set<string>(); // runIds where mocks were auto-started
   let liveServerStarted: Promise<void> | undefined;
 
   const server = new McpServer({ name: "Preflight", version: "0.1.0" });
@@ -193,12 +195,9 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         ),
         timeoutMs: z.number().int().positive().optional().describe(
           "Maximum wait time in milliseconds for the test to complete. " +
-          "Calculate as: number of visual flow steps × 60000 (1 minute per step). " +
-          "For example, a 5-step flow should set timeoutMs to 300000. " +
-          "Default is 120000 (2 minutes) which is only suitable for very short flows (1-2 steps). " +
+          "Capped internally at 45000ms so the MCP response returns before the 60s transport timeout. " +
           "NOTE: Only effective when waitForCompletion is true. " +
-          "MCP transport has a 60s hard timeout — if timeoutMs exceeds 60s, " +
-          "use waitForCompletion: false and poll with watch_run instead."
+          "For long runs, use waitForCompletion: false and poll with watch_run instead."
         ),
       },
     },
@@ -249,7 +248,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
           ...(mocksStarted ? { networkMocksActive: true } : {}),
         });
       }
-      const result = await runManager.waitForRun(started.runId, input.timeoutMs ?? 120_000, 2_000);
+      const result = await runManager.waitForRun(started.runId, safeMcpWaitMs(input.timeoutMs), RUN_POLL_INTERVAL_MS);
       if (mocksStarted) {
         try { await networkMockService.stop(); } catch { /* cleanup */ }
       }
@@ -264,9 +263,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       description: "Refresh and summarize a test run. Use while the live viewer is open. " +
         "For long-running tests that exceed the MCP transport timeout (60s): " +
         "(1) Call run_flow with waitForCompletion: false to get a runId. " +
-        "(2) Call watch_run with minIntervalMs (e.g. 30000 = check every 30s) to poll. " +
-        "minIntervalMs blocks on the server side and polls the agent every 2s internally, " +
-        "so one call covers one full interval without consuming tokens on intermediate checks. " +
+        "(2) Call watch_run to poll the run. It waits up to 45s by default and returns early when the run succeeds or fails. " +
         "Do NOT call run_flow again — that creates a duplicate run.",
       inputSchema: {
         runId: z.string(),
@@ -276,26 +273,17 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         ),
         timeoutMs: z.number().int().positive().optional().describe(
           "Maximum wait time in milliseconds. " +
-          "Based on the total number of steps in the original visual flow: steps × 60000. " +
-          "Default is 120000 (2 minutes). " +
+          "Capped internally at 45000ms so the MCP response returns before the 60s transport timeout. " +
           "NOTE: Only effective when waitForCompletion is true. " +
-          "Due to MCP 60s transport timeout, prefer polling without waitForCompletion for long runs."
-        ),
-        minIntervalMs: z.number().int().positive().optional().describe(
-          "Block for at least this many milliseconds before returning. " +
-          "While blocked, the server polls the agent every 2s internally. " +
-          "If the run finishes early, returns immediately. " +
-          "Use 30000 for a ~30s polling cadence without consuming extra tokens " +
-          "on intermediate calls. Capped internally to 55000 to leave headroom " +
-          "for the 60s MCP transport timeout."
+          "Prefer polling without waitForCompletion for long runs."
         ),
       },
     },
-    async ({ runId, waitForCompletion, timeoutMs, minIntervalMs }) => {
+    async ({ runId, waitForCompletion, timeoutMs }) => {
       await runtime.ensureStarted();
       const summary = waitForCompletion
-        ? await runManager.waitForRun(runId, timeoutMs ?? 120_000, 2_000)
-        : await runManager.watchRun(runId, minIntervalMs);
+        ? await runManager.waitForRun(runId, safeMcpWaitMs(timeoutMs), RUN_POLL_INTERVAL_MS)
+        : await runManager.watchRun(runId, MCP_SAFE_WAIT_MS);
       // Auto-cleanup mocks on terminal state
       if (["SUCCESS", "FAILED", "CANCELLED"].includes(summary.status) && networkMockService.isRunning()) {
         try { await networkMockService.stop(); } catch { /* cleanup */ }
@@ -587,6 +575,10 @@ function jsonResult(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
   };
+}
+
+function safeMcpWaitMs(timeoutMs?: number): number {
+  return Math.min(timeoutMs ?? MCP_SAFE_WAIT_MS, MCP_SAFE_WAIT_MS);
 }
 
 function preflightRunDefaults(): Record<string, string> {

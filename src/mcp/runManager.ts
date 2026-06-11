@@ -156,7 +156,10 @@ export class RunManager {
   private async refreshRun(runId: string): Promise<void> {
     const run = this.mustGet(runId);
     const [task, events, artifacts] = await Promise.all([
-      this.client.getTask(run.taskId),
+      this.client.getTask(run.taskId).catch((error) => {
+        logRun(runId, "REFRESH_ERROR", `getTask: ${error instanceof Error ? error.message : String(error)}`);
+        return run.task;
+      }),
       this.client.listEvents(run.taskId).catch(() => run.events),
       this.client.listArtifacts(run.taskId).catch(() => run.artifacts),
     ]);

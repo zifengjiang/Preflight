@@ -85,13 +85,24 @@ export class AgentHttpClient {
     const url = new URL(path, this.config.baseUrl);
     const headers = new Headers(init.headers);
     if (this.config.token) headers.set("Authorization", `Bearer ${this.config.token}`);
-    const resp = await fetch(url, { ...init, headers });
-    const text = await resp.text();
-    const body = text ? JSON.parse(text) : null;
-    if (!resp.ok) {
-      throw new AgentHttpError(resp.status, body && typeof body === "object" ? JSON.stringify(body) : text);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const resp = await fetch(url, { ...init, headers, signal: controller.signal });
+      const text = await resp.text();
+      const body = text ? JSON.parse(text) : null;
+      if (!resp.ok) {
+        throw new AgentHttpError(resp.status, body && typeof body === "object" ? JSON.stringify(body) : text);
+      }
+      return body as T;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new AgentHttpError(408, `Agent HTTP request timed out after 8000ms: ${url.pathname}`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    return body as T;
   }
 }
 

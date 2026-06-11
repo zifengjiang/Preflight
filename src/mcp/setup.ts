@@ -156,8 +156,8 @@ alwaysApply: false
 7. 调用 \`validate_visual_flow\`。如果校验失败，按 message 修正 visualFlow 后再次校验。
 8. 生成最小测试用例：先覆盖改动点，再补必要回归。
 9. 如用户给了 app 包，先调用 \`install_app\`。
-10. 调用 \`run_flow\`，把返回的 liveUrl 明确给用户，让用户可以打开浏览器看实时执行。
-11. 执行中调用 \`watch_run\` 观察状态。失败时先判断是环境/设备、IR 用例步骤、agent runtime 还是真实业务问题。
+10. 调用 \`run_flow\` 时必须设置 \`waitForCompletion: false\`，让工具立即返回 runId/liveUrl；不要用 \`waitForCompletion: true\` 等待完整流程，避免 MCP 60 秒传输超时。
+11. 执行中调用 \`watch_run\` 观察状态；工具默认等待最多 45 秒，run 一旦成功或失败会提前返回。失败时先判断是环境/设备、IR 用例步骤、agent runtime 还是真实业务问题。
 12. 如果失败原因是 IR 步骤不合理，只能调整 visualFlow 后重跑；不要读取或手写 Midscene TS 脚本。若是 Preflight 编译器/runtime 内部错误，停止并报告为工具缺陷。
 13. 最终调用 \`save_report\`，并在回复中给出测试报告、report/liveUrl 和 PASS/FAIL 结论。
 `;
@@ -193,8 +193,8 @@ Workflow:
 6. Read \`get_visual_flow_ir_rules\` and generate visualFlow JSON, not raw Midscene TypeScript.
 7. Validate with \`validate_visual_flow\`; fix the JSON until validation passes.
 8. Install the app when an app package path is provided.
-9. Start the run with \`run_flow\` and show the returned liveUrl.
-10. Poll with \`watch_run\`.
+9. Start the run with \`run_flow\` using \`waitForCompletion: false\`, then show the returned liveUrl. Never wait for a full flow inside \`run_flow\`; MCP transport can time out after about 60 seconds.
+10. Poll with \`watch_run\`; it waits up to 45s by default and returns early when the run succeeds or fails.
 11. Analyze failures before retrying. Distinguish device/env failures, brittle IR steps, agent runtime failures, and real app bugs. For IR problems, revise visualFlow only; never switch to raw Midscene script repair.
 12. Save report with \`save_report\`.
 
