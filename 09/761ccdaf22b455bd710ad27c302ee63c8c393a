@@ -1,3 +1,5 @@
+.github/workflows/release.yml
+  8ef42d0dbdc414b2 24-33
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -12,23 +14,10 @@
       },
       "human_author": "jeffjiang",
       "messages": [],
-      "total_additions": 133,
-      "total_deletions": 0,
-      "accepted_lines": 133,
+      "total_additions": 10,
+      "total_deletions": 1,
+      "accepted_lines": 142,
       "overriden_lines": 0
-    },
-    "d5e0fd7884146f6e": {
-      "agent_id": {
-        "tool": "claude",
-        "id": "a57f21eb-9357-4a23-8df0-65d748541d7a",
-        "model": "deepseek-v4-pro"
-      },
-      "human_author": "jeffjiang",
-      "messages": [],
-      "total_additions": 4,
-      "total_deletions": 0,
-      "accepted_lines": 3,
-      "overriden_lines": 1
     }
   }
 }
