@@ -19,6 +19,8 @@ export interface SetupResult {
   skillPath: string;
   codexSkillPath: string;
   agentsSkillPath: string;
+  claudeSkillPath: string;
+  androidEmulatorSetupSkillPath: string;
   runtimeRoot?: string;
   userConfigExamplePath: string;
 }
@@ -41,6 +43,8 @@ export async function setupLocalMcp(options: SetupOptions): Promise<SetupResult>
   const skillPath = join(options.projectRoot, ".preflight", "skills", "preflight.md");
   const codexSkillPath = join(homedir(), ".codex", "skills", "preflight", "SKILL.md");
   const agentsSkillPath = join(homedir(), ".agents", "skills", "preflight", "SKILL.md");
+  const claudeSkillPath = join(homedir(), ".claude", "skills", "preflight", "SKILL.md");
+  const androidEmulatorSetupSkillPath = join(homedir(), ".claude", "skills", "android-emulator-setup", "SKILL.md");
   const userConfigExamplePath = join(homedir(), ".preflight", "config.example.json");
   const codexConfigPath = join(homedir(), ".codex", "config.toml");
 
@@ -49,10 +53,12 @@ export async function setupLocalMcp(options: SetupOptions): Promise<SetupResult>
   await writeTextFile(skillPath, skillText());
   await writeTextFile(codexSkillPath, skillText());
   await writeTextFile(agentsSkillPath, skillText());
+  await writeTextFile(claudeSkillPath, skillText());
+  await writeTextFile(androidEmulatorSetupSkillPath, androidEmulatorSetupSkillText());
   await writeTextFile(userConfigExamplePath, userConfigExampleText());
   await upsertCodexMcpConfig(codexConfigPath, options.projectRoot, agentBaseUrl, livePort, isRuntime, runtimeRoot);
 
-  return { cursorConfigPath, cursorRulePath, codexConfigPath, skillPath, codexSkillPath, agentsSkillPath, runtimeRoot, userConfigExamplePath };
+  return { cursorConfigPath, cursorRulePath, codexConfigPath, skillPath, codexSkillPath, agentsSkillPath, claudeSkillPath, androidEmulatorSetupSkillPath, runtimeRoot, userConfigExamplePath };
 }
 
 async function writeCursorMcpConfig(path: string, projectRoot: string, agentBaseUrl: string, livePort: number, isRuntime: boolean, runtimeRoot?: string): Promise<void> {
@@ -214,5 +220,132 @@ function userConfigExampleText(): string {
     "MIDSCENE_MODEL_REASONING_ENABLED": "false"
   }
 }
+`;
+}
+
+function androidEmulatorSetupSkillText(): string {
+  return `---
+name: android-emulator-setup
+description: Use when setting up an Android emulator from scratch, installing Android SDK command-line tools, creating AVDs, or when emulator/adb/avdmanager commands are not found. Also use when the user asks to install, configure, or bootstrap an Android development environment.
+---
+
+# Android Emulator Setup
+
+Install the Android SDK command-line tools, create AVDs, and start emulators — the prerequisite step before Argent or Preflight can interact with a device.
+
+## Quick Detection
+
+Run these before doing any work. Skip sections whose tools already work.
+
+\`\`\`bash
+adb --version 2>/dev/null && echo "ADB OK" || echo "ADB MISSING"
+emulator -list-avds 2>/dev/null && echo "EMULATOR OK" || echo "EMULATOR MISSING"
+echo "ANDROID_HOME=\${ANDROID_HOME:-UNSET}"
+\`\`\`
+
+| Result | Action |
+|--------|--------|
+| ADB MISSING | Start from § Install SDK |
+| EMULATOR MISSING, ADB OK | Jump to § Install SDK Components |
+| Both OK, no AVDs | Jump to § Create AVD |
+| Both OK, AVD exists | Jump to § Start Emulator |
+
+## Install SDK
+
+**macOS with Homebrew (recommended):**
+
+\`\`\`bash
+brew install android-commandlinetools
+\`\`\`
+
+**Manual install (macOS/Linux):**
+
+\`\`\`bash
+# 1. Download from https://developer.android.com/studio#command-line-tools-only
+# 2. Unzip to the correct path:
+mkdir -p ~/Library/Android/sdk/cmdline-tools/latest
+cd ~/Library/Android/sdk/cmdline-tools/latest
+unzip ~/Downloads/commandlinetools-mac-*.zip
+\`\`\`
+
+## Configure Environment
+
+Add to \`~/.zshrc\` (or \`~/.bashrc\`):
+
+\`\`\`bash
+# With brew:
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+# With manual install:
+# export ANDROID_HOME=$HOME/Library/Android/sdk
+
+export PATH=$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+\`\`\`
+
+Then \`source ~/.zshrc\` and verify:
+
+\`\`\`bash
+sdkmanager --version  # should print a version
+\`\`\`
+
+## Install SDK Components
+
+\`\`\`bash
+# Accept licenses (non-interactive)
+yes | sdkmanager --licenses
+
+# Install core components
+sdkmanager "platform-tools" "emulator" "platforms;android-34"
+
+# Install a system image (ARM Mac → arm64-v8a, Intel → x86_64)
+sdkmanager "system-images;android-34;google_apis;arm64-v8a"
+\`\`\`
+
+> **Pick the right system image:** \`sdkmanager --list | grep system-images\` to see available images. API 34 is a safe default; adjust based on the app's \`minSdk\`.
+
+## Create AVD
+
+\`\`\`bash
+avdmanager create avd \\
+  -n test_device \\
+  -k "system-images;android-34;google_apis;arm64-v8a" \\
+  -d "pixel_6"
+\`\`\`
+
+Verify: \`emulator -list-avds\` should show \`test_device\`.
+
+## Start Emulator
+
+\`\`\`bash
+emulator -avd test_device &
+\`\`\`
+
+Wait for boot (1-2 min), then verify:
+
+\`\`\`bash
+adb devices
+# List of devices attached
+# emulator-5554   device
+\`\`\`
+
+## Common Issues
+
+| Symptom | Fix |
+|---------|-----|
+| \`sdkmanager: command not found\` | \`cmdline-tools/latest/bin\` not in PATH; check § Configure Environment |
+| \`avdmanager: command not found\` | Same as above — part of cmdline-tools |
+| Emulator black screen on Apple Silicon | Ensure system image is \`arm64-v8a\`, not \`x86_64\` |
+| \`adb devices\` shows \`unauthorized\` | Wait 30s for emulator to finish booting |
+| \`The emulator process has terminated\` | Try \`emulator -avd test_device -wipe-data\` |
+| \`ANDROID_HOME\` not set after brew install | Brew's path is \`/opt/homebrew/share/android-commandlinetools\` |
+| \`PANIC: Missing emulator engine\` | Run \`sdkmanager "emulator"\` to install the emulator binary |
+| No space left on device | System images are ~1-2 GB; \`sdkmanager --uninstall\` unused images |
+
+## Post-Setup
+
+Once the emulator is running, it's ready for:
+- **Argent:** \`argent-android-emulator-setup\` skill (boot, connect, interact)
+- **Preflight:** \`preflight\` skill (visual-flow tests via MCP)
+
+To kill: \`adb -s emulator-5554 emu kill\`
 `;
 }
