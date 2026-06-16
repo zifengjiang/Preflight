@@ -1,6 +1,6 @@
 {
   "name": "preflite",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Preflight — Local mobile AI testing via MCP. AI-assisted testing on real Android/iOS/Harmony devices.",
   "license": "Apache-2.0",
   "type": "module",
