@@ -93,12 +93,6 @@ export type VisualStep =
       pattern?: string
       replacement?: string
     }
-  /** Add or replace a network mock rule during test execution. */
-  | { type: 'setMock'; rule: NetworkMockRule }
-  /** Remove a network mock rule by urlPattern match. */
-  | { type: 'removeMock'; urlPattern: string }
-  /** Clear all network mock rules. */
-  | { type: 'clearMocks' }
   /**
    * 调用另一条测试用例：优先展开其 `visualFlow`（与当前脚本共享 `__flowStep` 序号链）；
    * 若无有效编排则内联其 `scriptContent`（变量由脚本顶部注入的 `__FLOW_DATA` / `__scoped` 等提供）。
@@ -114,53 +108,8 @@ export type VisualStep =
       varBindings: Record<string, string>
     }
 
-export interface NetworkMockResponse {
-  /** HTTP status code (default: 200) */
-  status?: number
-  /** Response body, typically a JSON string */
-  body: string
-  /**
-   * Key-value pairs that must be present (with matching values) in the JSON
-   * request body for this response to match. Omit to match any body.
-   */
-  requestBodyMatch?: Record<string, string>
-  /**
-   * Only apply on the nth matching call to this URL pattern (1-based).
-   * Enables stateful sequences: first call returns an error, second succeeds, etc.
-   */
-  callIndex?: number
-  /** Optional response headers */
-  headers?: Record<string, string>
-  /** Delay in ms before responding (simulates network latency) */
-  delay?: number
-}
-
-export interface NetworkMockRule {
-  /**
-   * Substring to match against the full request URL.
-   * The first rule whose urlPattern is a substring of the request URL wins.
-   */
-  urlPattern?: string
-  /** Regex pattern to match against the full request URL. Overrides urlPattern if both set. */
-  urlRegex?: string
-  /** Key-value pairs that must be present in the request URL query string. */
-  queryParams?: Record<string, string>
-  /** HTTP method to match (default: matches any method) */
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
-  /** Ordered response variants. The first matching response is returned. */
-  responses: NetworkMockResponse[]
-  /** Human-readable description */
-  description?: string
-}
-
 export interface VisualFlowDocument {
   version: typeof VISUAL_FLOW_VERSION
   scriptVars?: VisualFlowScriptVar[]
   steps: VisualStep[]
-  /**
-   * Network mock rules applied before the test runs.
-   * Matching HTTP requests are intercepted and return mock responses;
-   * non-matching traffic is forwarded transparently.
-   */
-  networkMocks?: NetworkMockRule[]
 }
