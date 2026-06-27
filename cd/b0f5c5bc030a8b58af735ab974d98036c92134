@@ -1,0 +1,37 @@
+docs/superpowers/specs/2026-06-27-preflight-live-viewer-redesign-design.md
+  10dfe2301bf24cde 248-373
+  168bf41e9d1ee6f0 1-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "cdb0f5c5bc030a8b58af735ab974d98036c92134",
+  "prompts": {
+    "10dfe2301bf24cde": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d12159f1-7c00-4836-8b29-28f2bd4891bf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 126,
+      "total_deletions": 0,
+      "accepted_lines": 126,
+      "overriden_lines": 0
+    },
+    "168bf41e9d1ee6f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "018cc325-8703-43ed-a74d-443b94ec2bb2",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 1205,
+      "total_deletions": 2,
+      "accepted_lines": 1204,
+      "overriden_lines": 0
+    }
+  }
+}
