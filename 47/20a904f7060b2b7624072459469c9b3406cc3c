@@ -1,0 +1,23 @@
+src/mcp/live/page.ts
+  10dfe2301bf24cde 290,307-349,356-358,377,401,406-411,415-417,437-438,448-464,467,471,473,487-491,502-513,577-581,583,599-600
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4720a904f7060b2b7624072459469c9b3406cc3c",
+  "prompts": {
+    "10dfe2301bf24cde": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d12159f1-7c00-4836-8b29-28f2bd4891bf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 117,
+      "total_deletions": 19,
+      "accepted_lines": 609,
+      "overriden_lines": 0
+    }
+  }
+}
