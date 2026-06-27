@@ -1,0 +1,25 @@
+src/mcp/live/foregroundProbe.ts
+  10dfe2301bf24cde 1-41
+src/tests/foregroundProbe.test.ts
+  10dfe2301bf24cde 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "87362219c7ad30cbf573bdb771a683abc0390efa",
+  "prompts": {
+    "10dfe2301bf24cde": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d12159f1-7c00-4836-8b29-28f2bd4891bf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 69,
+      "total_deletions": 4,
+      "accepted_lines": 65,
+      "overriden_lines": 0
+    }
+  }
+}
