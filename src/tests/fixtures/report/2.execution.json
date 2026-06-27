@@ -1,0 +1,61 @@
+{
+  "executions": [
+    {
+      "name": "Act - 打开设置",
+      "tasks": [
+        {
+          "type": "Planning",
+          "subType": "Plan",
+          "status": "finished",
+          "output": {
+            "thought": "点右上角齿轮"
+          },
+          "uiContext": {
+            "screenshot": {
+              "type": "midscene_screenshot_ref",
+              "id": "b1",
+              "capturedAt": 1000000001000,
+              "mimeType": "image/png",
+              "storage": "inline"
+            }
+          },
+          "recorder": []
+        },
+        {
+          "type": "Action Space",
+          "subType": "Tap",
+          "status": "finished",
+          "param": {
+            "locate": {
+              "description": "设置入口",
+              "center": [320, 96]
+            }
+          },
+          "uiContext": {
+            "screenshot": {
+              "type": "midscene_screenshot_ref",
+              "id": "b1",
+              "capturedAt": 1000000001000,
+              "mimeType": "image/png",
+              "storage": "inline"
+            }
+          },
+          "recorder": [
+            {
+              "type": "screenshot",
+              "ts": 1000000002000,
+              "timing": "after-calling",
+              "screenshot": {
+                "type": "midscene_screenshot_ref",
+                "id": "b2",
+                "capturedAt": 1000000002000,
+                "mimeType": "image/png",
+                "storage": "inline"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

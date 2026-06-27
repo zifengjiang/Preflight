@@ -1,0 +1,25 @@
+{
+  "executions": [
+    {
+      "name": "Launch",
+      "tasks": [
+        {
+          "type": "Action Space",
+          "subType": "Launch",
+          "status": "finished",
+          "param": { "bundleId": "com.example.app" },
+          "uiContext": {
+            "screenshot": {
+              "type": "midscene_screenshot_ref",
+              "id": "a",
+              "capturedAt": 1000000000000,
+              "mimeType": "image/png",
+              "storage": "inline"
+            }
+          },
+          "recorder": []
+        }
+      ]
+    }
+  ]
+}
