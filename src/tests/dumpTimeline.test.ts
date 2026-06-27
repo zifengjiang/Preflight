@@ -42,6 +42,32 @@ test("mergeWithVisualFlow pads pending steps from visualFlow", async () => {
   assert.equal(merged.steps[3].status, "pending");
 });
 
+test("mergeWithVisualFlow overlays running + durationMs from flow-step events", async () => {
+  const view = await buildTimelineFromReportDir(fixtureDir);
+  // Fixture dump has two finished steps at index 1 and 2.
+  assert.equal(view.steps[0].index, 1);
+  assert.equal(view.steps[1].index, 2);
+  const visualFlow = {
+    steps: [
+      { type: "launch", bundleId: "x" },
+      { type: "aiTap", prompt: "a" },
+    ],
+  };
+  const events = [
+    { type: "end" as const, stepIndex: 1, ts: 2, durationMs: 1500 },
+    { type: "start" as const, stepIndex: 2, ts: 1 },
+  ];
+  const merged = mergeWithVisualFlow(view, visualFlow, events);
+  const step1 = merged.steps.find((s) => s.index === 1)!;
+  const step2 = merged.steps.find((s) => s.index === 2)!;
+  // fsv "running" is overlaid onto step 2.
+  assert.equal(step2.status, "running");
+  // step 1 stays finished (fsv "passed"/end must NOT downgrade the authoritative dump status)
+  // but its durationMs is backfilled from the event.
+  assert.equal(step1.status, "finished");
+  assert.equal(step1.durationMs, 1500);
+});
+
 test("resolveActiveReportDir returns fixtureDir itself when no qualifying subdir exists", async () => {
   const result = await resolveActiveReportDir(fixtureDir);
   assert.equal(result, fixtureDir);

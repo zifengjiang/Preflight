@@ -463,7 +463,7 @@ export function renderLivePage(runId: string): string {
         });
       }
     };
-    setInterval(() => { if (lastRev < 0) refreshDump(); }, 15000); // fallback poll until first revision
+    setInterval(() => { if (!terminalReached) refreshDump(); }, 15000); // fallback poll: covers a silently-wedged SSE (no error event, mid-run) until terminal
     let firstDumpDone = false;
     async function refreshDump() {
       try {
@@ -491,7 +491,8 @@ export function renderLivePage(runId: string): string {
       }
       root.innerHTML = steps.map(s => s.index === sel ? expandedHTML(s) : collapsedHTML(s)).join('');
       root.querySelectorAll('[data-step]').forEach(el =>
-        el.addEventListener('click', () => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest && e.target.closest('.strip')) return;  // let users click screenshots without collapsing the card
           const idx = Number(el.dataset.step);
           if (pinned === idx) { pinned = null; followLive = true; }   // click the pinned/running step again -> resume auto-follow
           else { pinned = idx; followLive = false; }                  // click another step -> pin it

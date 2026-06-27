@@ -6,8 +6,3 @@ export function resolveRunReportDir(opts: { runtimeRoot: string; env: Record<str
   const runDir = isAbsolute(base) ? base : resolve(opts.runtimeRoot, base);
   return join(runDir, "report");
 }
-
-/** Screenshots live under <reportDir>/screenshots (see Task 1 findings). */
-export function resolveRunScreenshotsDir(reportDir: string): string {
-  return join(reportDir, "screenshots");
-}

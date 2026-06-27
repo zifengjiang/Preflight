@@ -192,6 +192,7 @@ function buildStreamParams(platform: string, env: Record<string, string> = {}): 
   if (p === "HARMONY") {
     return { platform: "HARMONY", serial: env.MIDSCENE_HARMONY_DEVICE_ID?.trim(), hdcPath: env.MIDSCENE_HARMONY_HDC_PATH?.trim() || "hdc" };
   }
+  // ponytail: serial from env only; multi-device runs that identify the device via resourceId (as videoRecorder's resolveAutoSource does) would need that fallback. Single-device localhost works as-is.
   return {
     platform: "ANDROID",
     serial: env.MIDSCENE_ANDROID_SERIAL?.trim(),

@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readReport } from "../reportReader.js";
-import { buildFlowStepView } from "../flowStepEvents.js";
+import { buildFlowStepView, type FlowStepEvent } from "../flowStepEvents.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -146,7 +146,7 @@ export async function buildTimelineFromReportDir(reportDir: string): Promise<Tim
   return { revision: steps.length, steps };
 }
 
-export async function resolveActiveReportDir(reportRoot: string): Promise<string> {
+export async function resolveActiveReportDir(reportRoot: string, sinceMs?: number): Promise<string> {
   if (!existsSync(reportRoot)) return reportRoot;
 
   let entries: string[];
@@ -175,7 +175,11 @@ export async function resolveActiveReportDir(reportRoot: string): Promise<string
       continue;
     }
     const hasExec = subEntries.some((f) => /^\d+\.execution\.json$/.test(f));
-    if (hasExec) candidates.push({ dir: fullPath, mtime: s.mtimeMs });
+    if (!hasExec) continue;
+    // §15.5: scope to bundles touched at/after the run start so a prior run's bundle
+    // isn't briefly surfaced. When sinceMs is undefined (or NaN), this never filters.
+    if (sinceMs != null && s.mtimeMs < sinceMs) continue;
+    candidates.push({ dir: fullPath, mtime: s.mtimeMs });
   }
 
   if (candidates.length === 0) return reportRoot;
@@ -184,15 +188,24 @@ export async function resolveActiveReportDir(reportRoot: string): Promise<string
   return candidates[0].dir;
 }
 
-export function mergeWithVisualFlow(view: TimelineView, visualFlow: unknown): TimelineView {
-  const planned = buildFlowStepView(visualFlow, []).steps;
-  if (planned.length <= view.steps.length) return view;
-  const pendingTail = planned.slice(view.steps.length).map((p) => ({
-    index: p.index,
-    title: p.title,
-    status: "pending" as const,
-    summary: "",
-    screenshots: [] as string[],
-  }));
-  return { revision: view.revision, steps: [...view.steps, ...pendingTail] };
+export function mergeWithVisualFlow(view: TimelineView, visualFlow: unknown, events: FlowStepEvent[] = []): TimelineView {
+  const fsv = buildFlowStepView(visualFlow, events);
+  const planned = fsv.steps;
+  // Build the full list first: dump steps, plus any planned tail beyond the dump as pending.
+  const base: TimelineStep[] = planned.length > view.steps.length
+    ? [...view.steps, ...planned.slice(view.steps.length).map((p): TimelineStep => ({
+        index: p.index, title: p.title, status: "pending", summary: "", screenshots: [],
+      }))]
+    : view.steps;
+  // Overlay running-status + durationMs from the flow-step view, keyed by index. The dump stays
+  // authoritative for finished/failed; we only promote to running (when fsv says running and the
+  // dump didn't mark it failed) and backfill durationMs when the dump didn't provide one.
+  const byIndex = new Map(planned.map((p) => [p.index, p]));
+  const steps = base.map((s) => {
+    const f = byIndex.get(s.index);
+    const status = (s.status !== "failed" && f?.status === "running") ? "running" as const : s.status;
+    const durationMs = s.durationMs ?? f?.durationMs;
+    return { ...s, status, ...(durationMs != null ? { durationMs } : {}) };
+  });
+  return { revision: view.revision, steps };
 }
