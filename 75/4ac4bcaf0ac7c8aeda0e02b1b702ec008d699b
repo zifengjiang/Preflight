@@ -1,0 +1,25 @@
+src/tests/deviceStream.test.ts
+  10dfe2301bf24cde 1-62
+src/mcp/live/deviceStream.ts
+  10dfe2301bf24cde 1-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "754ac4bcaf0ac7c8aeda0e02b1b702ec008d699b",
+  "prompts": {
+    "10dfe2301bf24cde": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d12159f1-7c00-4836-8b29-28f2bd4891bf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 155,
+      "total_deletions": 8,
+      "accepted_lines": 146,
+      "overriden_lines": 0
+    }
+  }
+}
