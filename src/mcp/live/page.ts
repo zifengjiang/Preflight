@@ -287,7 +287,7 @@ export function renderLivePage(runId: string): string {
       user-select: none;
     }
     #rawlog > summary::-webkit-details-marker { display: none; }
-    #rawlog > summary::before { content: "\\25B8"; display: inline-block; margin-right: 6px; transition: transform 0.12s; }
+    #rawlog > summary::before { content: "\\25B8"; display: inline-block; margin-right: 6px; }
     #rawlog[open] > summary::before { transform: rotate(90deg); }
     .rawlist {
       max-height: 140px;
@@ -304,12 +304,58 @@ export function renderLivePage(runId: string): string {
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    /* ── Waiting label (device pane, before first frame) ───────── */
+    #waiting-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: var(--muted);
+      pointer-events: none;
+      letter-spacing: 0.2px;
+    }
+
+    /* ── Timeline empty / skeleton states ───────────────────────── */
+    .tl-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.2px;
+    }
+    .skel-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 7px 10px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+    }
+    .skel-g {
+      flex: 0 0 14px;
+      height: 13px;
+      border-radius: 3px;
+      background: var(--surface);
+    }
+    .skel-line {
+      height: 12px;
+      border-radius: 3px;
+      background: var(--surface);
+    }
+
     @media (prefers-reduced-motion: no-preference) {
       #run-status.is-running, #live-badge:not(.snapshot) { animation: pulse 1.8s ease-in-out infinite; }
       @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
       .step.expanded { animation: reveal 0.18s ease-out; }
       @keyframes reveal { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
       .step.expanded.running { transition: box-shadow 0.2s, border-color 0.2s; }
+      #rawlog > summary::before { transition: transform 0.12s; }
+      .skel-g, .skel-line { animation: shimmer 1.4s ease-in-out infinite; }
+      @keyframes shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
     }
   </style>
 </head>
@@ -328,6 +374,7 @@ export function renderLivePage(runId: string): string {
     <div id="device">
       <img id="screen" alt="device screen" />
       <span id="live-badge">LIVE</span>
+      <div id="waiting-label">等待首帧…</div>
     </div>
     <div id="timeline"></div>
   </div>
@@ -351,14 +398,23 @@ export function renderLivePage(runId: string): string {
     /* ── Step 2: device sizing guard ──────────────────────────── */
     const screen = document.getElementById('screen');
     const device = document.getElementById('device');
+    let terminalReached = false;   // guards screen.src reassignment after terminal status
     function syncDeviceWidth() {
       if (!screen.naturalWidth || !screen.naturalHeight) return;
       device.style.width = (device.clientHeight * screen.naturalWidth / screen.naturalHeight) + 'px';
     }
-    screen.addEventListener('load', syncDeviceWidth);
+    screen.addEventListener('load', () => {
+      // hide the "waiting for first frame" overlay on the first successful load
+      const wl = document.getElementById('waiting-label');
+      if (wl) wl.style.display = 'none';
+      syncDeviceWidth();
+    });
     window.addEventListener('resize', syncDeviceWidth);
     screen.src = runUrl + '/screen.mjpeg';
     screen.onerror = () => {
+      if (terminalReached) return;   // run is done — preserve the last frame, do not retry
+      const wl = document.getElementById('waiting-label');
+      if (wl) wl.style.display = 'none';   // stream failed before first frame; don't keep waiting
       const b = document.getElementById('live-badge');
       b.textContent = 'SNAPSHOT';
       b.classList.add('snapshot');
@@ -378,6 +434,8 @@ export function renderLivePage(runId: string): string {
     /* ── Step 3: SSE client + revision-driven dump refresh ────── */
     let lastRev = -1, pinned = null, followLive = true;
     let lastSteps = [];
+    let skeletonCount = 4;   // refined once we fetch meta; used before first dump
+    let terminalDraining = false;   // re-entry guard for the one-shot terminal cleanup
     const es = new EventSource(runUrl + '/events');
     es.onmessage = (e) => {
       const m = JSON.parse(e.data);
@@ -387,15 +445,32 @@ export function renderLivePage(runId: string): string {
         chip.textContent = m.bundleId;
         chip.hidden = false;
       }
-      if (m.status && TERMINAL.has(String(m.status).toUpperCase())) stopTimer();
-      if (typeof m.revision === 'number' && m.revision !== lastRev) { lastRev = m.revision; refreshDump(); refreshMeta(); }
+      const isTerminal = !!m.status && TERMINAL.has(String(m.status).toUpperCase());
+      if (isTerminal) stopTimer();
+      if (typeof m.revision === 'number' && m.revision !== lastRev) {   // normal revision-driven refresh
+        lastRev = m.revision;
+        refreshDump();
+        refreshMeta();
+      }
+      if (isTerminal && !terminalDraining) {   // terminal cleanup: revision-INDEPENDENT, runs once
+        terminalDraining = true;
+        // The terminal tick usually carries the SAME revision as the last step,
+        // so this must NOT be gated behind the revision guard above. Do one final
+        // dump+meta refresh, then stop everything regardless of refresh outcome.
+        refreshDump().then(() => refreshMeta()).finally(() => {
+          terminalReached = true;  // after final refresh: block screen.onerror retries
+          es.close();
+        });
+      }
     };
     setInterval(() => { if (lastRev < 0) refreshDump(); }, 15000); // fallback poll until first revision
+    let firstDumpDone = false;
     async function refreshDump() {
       try {
         const view = await (await fetch(runUrl + '/dump')).json();
+        firstDumpDone = true;
         renderTimeline(view.steps || []);
-      } catch (_) { /* Task 9 owns error / reconnect UX */ }
+      } catch (_) { /* network error; keep showing whatever is rendered */ }
     }
 
     /* ── Step 4: timeline render ──────────────────────────────── */
@@ -409,6 +484,11 @@ export function renderLivePage(runId: string): string {
       if (pinned != null && !steps.some(s => s.index === pinned)) { pinned = null; followLive = true; }  // stale pin -> resume follow
       const sel = pinned ?? (followLive ? currentIndex(steps) : null);
       const root = document.getElementById('timeline');
+      if (steps.length === 0) {
+        root.innerHTML = '<div class="tl-empty">尚无步骤</div>';
+        updateProgress(steps);
+        return;
+      }
       root.innerHTML = steps.map(s => s.index === sel ? expandedHTML(s) : collapsedHTML(s)).join('');
       root.querySelectorAll('[data-step]').forEach(el =>
         el.addEventListener('click', () => {
@@ -418,6 +498,18 @@ export function renderLivePage(runId: string): string {
           renderTimeline(steps);
         }));
       updateProgress(steps);
+    }
+    function renderSkeleton(n) {
+      const root = document.getElementById('timeline');
+      // Only render skeleton if the first real dump hasn't arrived yet
+      if (firstDumpDone) return;
+      const widths = [55, 70, 45, 62, 50, 68, 40, 58];
+      root.innerHTML = Array.from({ length: n }, (_, i) =>
+        '<div class="skel-row"><div class="skel-g"></div>'
+        + '<div style="flex:1;display:flex;align-items:center;gap:8px">'
+        + '<div class="skel-line" style="width:' + widths[i % widths.length] + '%"></div>'
+        + '</div></div>'
+      ).join('');
     }
     function collapsedHTML(s) {
       return '<div class="step ' + s.status + '" data-step="' + s.index + '"><span class="g ' + s.status + '">' + (STATUS_GLYPH[s.status] || '') + '</span>'
@@ -482,8 +574,13 @@ export function renderLivePage(runId: string): string {
     async function refreshMeta() {
       try {
         const run = await (await fetch(apiUrl)).json();
+        // Refine skeleton count from actual visualFlow step count (top-level only)
+        if (!firstDumpDone && run.visualFlow && Array.isArray(run.visualFlow.steps)) {
+          skeletonCount = run.visualFlow.steps.length || 4;
+          renderSkeleton(skeletonCount);
+        }
         renderMeta(run);
-      } catch (_) { /* Task 9 owns error UX */ }
+      } catch (_) { /* network error; keep current UI */ }
     }
 
     /* ── elapsed timer ────────────────────────────────────────── */
@@ -499,7 +596,8 @@ export function renderLivePage(runId: string): string {
     function stopTimer() { if (timer) { clearInterval(timer); timer = null; } tick(); }
 
     /* ── boot ─────────────────────────────────────────────────── */
-    refreshMeta();
+    renderSkeleton(skeletonCount);  // show skeleton immediately; replaced by real rows on first dump
+    refreshMeta();                  // refines skeleton count then updates status bar
     tick();
   </script>
 </body>
