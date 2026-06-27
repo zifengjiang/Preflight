@@ -206,6 +206,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       });
       await liveServerStarted;
       const script = await compileVisualFlow(parsed.value);
+      const mergedEnv = { ...preflightRunDefaults(), ...(await loadConfigEnv()), ...input.runtimeEnv };
       const started = await runManager.startRun({
         platform: input.platform,
         script,
@@ -213,7 +214,8 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         resourceId: input.resourceId,
         appRef: input.appRef,
         testIntent: input.testIntent,
-        runtimeEnv: { ...preflightRunDefaults(), ...(await loadConfigEnv()), ...input.runtimeEnv },
+        runtimeEnv: mergedEnv,
+        runtimeRoot: projectRoot,
         visualFlow: parsed.value,
       });
       if (!input.waitForCompletion) {

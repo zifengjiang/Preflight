@@ -50,6 +50,19 @@ export interface RunState {
   testIntent?: string;
   script?: string;
   visualFlow?: unknown;
+  /** Resolved per-run device-stream parameters (filled at startRun). */
+  streamParams?: {
+    platform: "ANDROID" | "IOS" | "HARMONY";
+    serial?: string;        // android adb serial / harmony device id
+    adbHost?: string;
+    adbPort?: number;
+    wdaHost?: string;       // ios
+    wdaPort?: number;       // ios
+    mjpegPort?: number;     // ios MJPEG
+    hdcPath?: string;       // harmony
+  };
+  /** Absolute Midscene report root dir for this run (filled at startRun). */
+  reportDir?: string;
   createdAt: string;
   updatedAt: string;
   liveUrl: string;

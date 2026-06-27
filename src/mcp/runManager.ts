@@ -6,6 +6,7 @@ import type { AgentHttpClient } from "./agentHttpClient.js";
 import { buildFlowStepView, extractFlowStepEventsFromRun } from "./flowStepEvents.js";
 import { summarizeRun } from "./runSummary.js";
 import type { RunState, RunSummary } from "./types.js";
+import { resolveRunReportDir } from "./live/runReportPaths.js";
 
 /**
  * MCP transport has a 60s hard timeout.  watchRun blocking must leave
@@ -63,6 +64,7 @@ export class RunManager {
     appRef?: string;
     testIntent?: string;
     runtimeEnv?: Record<string, string>;
+    runtimeRoot?: string;
     visualFlow?: unknown;
   }): Promise<RunSummary> {
     const runId = timestampId();
@@ -78,6 +80,8 @@ export class RunManager {
       testIntent: input.testIntent,
       script: input.script,
       visualFlow: input.visualFlow,
+      streamParams: buildStreamParams(input.platform, input.runtimeEnv ?? {}),
+      reportDir: input.runtimeRoot ? resolveRunReportDir({ runtimeRoot: input.runtimeRoot, env: input.runtimeEnv ?? {} }) : undefined,
       createdAt: now,
       updatedAt: now,
       liveUrl,
@@ -176,6 +180,24 @@ export class RunManager {
     if (!run) throw new Error(`Unknown runId: ${runId}`);
     return run;
   }
+}
+
+function buildStreamParams(platform: string, env: Record<string, string> = {}): RunState["streamParams"] {
+  const p = platform.toUpperCase();
+  if (p === "IOS") {
+    const wdaPort = Number(env.MIDSCENE_IOS_WDA_PORT ?? env.IOS_WDA_PORT) || undefined;
+    const mjpegPort = Number(env.MIDSCENE_IOS_WDA_MJPEG_PORT ?? env.IOS_WDA_MJPEG_PORT) || (wdaPort ? wdaPort + 1000 : undefined);
+    return { platform: "IOS", wdaHost: env.MIDSCENE_IOS_WDA_HOST?.trim() || "127.0.0.1", wdaPort, mjpegPort };
+  }
+  if (p === "HARMONY") {
+    return { platform: "HARMONY", serial: env.MIDSCENE_HARMONY_DEVICE_ID?.trim(), hdcPath: env.MIDSCENE_HARMONY_HDC_PATH?.trim() || "hdc" };
+  }
+  return {
+    platform: "ANDROID",
+    serial: env.MIDSCENE_ANDROID_SERIAL?.trim(),
+    adbHost: env.MIDSCENE_ANDROID_ADB_HOST?.trim() || "127.0.0.1",
+    adbPort: Number(env.MIDSCENE_ANDROID_ADB_PORT) || 5037,
+  };
 }
 
 function timestampId(): string {
