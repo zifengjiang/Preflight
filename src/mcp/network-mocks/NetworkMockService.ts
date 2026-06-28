@@ -27,24 +27,44 @@ export class NetworkMockService {
     }
     const port = await this.server.start(config.rules, "0.0.0.0", config.preferredPort ?? 0);
     const proxyHost = proxyHostForPlatform(config.platform);
-    configureDeviceProxy({
-      platform: config.platform,
-      deviceId: config.deviceId,
-      proxyHost,
-      proxyPort: port,
-    });
-    this.activeConfig = { platform: config.platform, deviceId: config.deviceId };
+
+    // Install the CA BEFORE mutating the device proxy: if it fails, the device
+    // is still untouched, so we can throw without leaving a stuck http_proxy.
+    // Stop the (already-listening) server on any failure so it isn't orphaned.
     if (config.platform === "android") {
-      const result = await ensureCaInstalled({
-        serial: config.deviceId,
-        caPemPath: this.server.getRootCaPemPath(),
-      });
-      if (!result.installed) {
-        throw new Error(`CA install failed on device ${config.deviceId}: cert not found at expected path after install`);
+      try {
+        const result = await ensureCaInstalled({
+          serial: config.deviceId,
+          caPemPath: this.server.getRootCaPemPath(),
+        });
+        if (!result.installed) {
+          throw new Error(
+            `CA install failed on ${config.deviceId} — the device likely needs a rootable (non-Play-Store) Android image (adb root must succeed), or the cert push was denied.` +
+            (result.reason ? ` (${result.reason})` : ""),
+          );
+        }
+      } catch (err) {
+        try { await this.server.stop(); } catch { /* best-effort */ }
+        throw err;
       }
     }
-    this.startCertServer(proxyHost, port);
-    return this.server.getStats();
+
+    // From here on the device gets mutated; if anything throws, roll back so we
+    // never leave the proxy set or the server listening.
+    try {
+      configureDeviceProxy({
+        platform: config.platform,
+        deviceId: config.deviceId,
+        proxyHost,
+        proxyPort: port,
+      });
+      this.activeConfig = { platform: config.platform, deviceId: config.deviceId };
+      this.startCertServer(proxyHost, port);
+      return this.server.getStats();
+    } catch (err) {
+      try { await this.stop(); } catch { /* best-effort rollback */ }
+      throw err;
+    }
   }
 
   async stop(): Promise<NetworkMockStats> {
