@@ -224,35 +224,43 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
           });
         }
       }
-      liveServerStarted ??= startLiveViewer(livePort, runManager).then((viewer) => {
-        runManager.setLiveBaseUrl(viewer.baseUrl);
-      });
-      await liveServerStarted;
-      const script = await compileVisualFlow(parsed.value);
-      const mergedEnv = { ...preflightRunDefaults(), ...(await loadConfigEnv()), ...input.runtimeEnv };
-      const started = await runManager.startRun({
-        platform: input.platform,
-        script,
-        scriptKind: "midscene",
-        resourceId: input.resourceId,
-        appRef: input.appRef,
-        testIntent: input.testIntent,
-        runtimeEnv: mergedEnv,
-        runtimeRoot: projectRoot,
-        visualFlow: parsed.value,
-      });
-      if (!input.waitForCompletion) {
-        return jsonResult({
-          ...started,
-          visualFlow: parsed.value,
-          ...(mocksStarted ? { networkMocksActive: true } : {}),
+      // When waitForCompletion is false we hand mock ownership to the caller
+      // (watch_run/cancel_run tear them down on terminal state). Otherwise this
+      // handler owns teardown and must run it on success AND on any throw.
+      let mockOwnershipTransferred = false;
+      try {
+        liveServerStarted ??= startLiveViewer(livePort, runManager).then((viewer) => {
+          runManager.setLiveBaseUrl(viewer.baseUrl);
         });
+        await liveServerStarted;
+        const script = await compileVisualFlow(parsed.value);
+        const mergedEnv = { ...preflightRunDefaults(), ...(await loadConfigEnv()), ...input.runtimeEnv };
+        const started = await runManager.startRun({
+          platform: input.platform,
+          script,
+          scriptKind: "midscene",
+          resourceId: input.resourceId,
+          appRef: input.appRef,
+          testIntent: input.testIntent,
+          runtimeEnv: mergedEnv,
+          runtimeRoot: projectRoot,
+          visualFlow: parsed.value,
+        });
+        if (!input.waitForCompletion) {
+          mockOwnershipTransferred = true;
+          return jsonResult({
+            ...started,
+            visualFlow: parsed.value,
+            ...(mocksStarted ? { networkMocksActive: true } : {}),
+          });
+        }
+        const result = await runManager.waitForRun(started.runId, safeMcpWaitMs(input.timeoutMs), RUN_POLL_INTERVAL_MS);
+        return jsonResult(result);
+      } finally {
+        if (mocksStarted && !mockOwnershipTransferred) {
+          try { await networkMockService.stop(); } catch { /* cleanup */ }
+        }
       }
-      const result = await runManager.waitForRun(started.runId, safeMcpWaitMs(input.timeoutMs), RUN_POLL_INTERVAL_MS);
-      if (mocksStarted) {
-        try { await networkMockService.stop(); } catch { /* cleanup */ }
-      }
-      return jsonResult(result);
     },
   );
 
@@ -461,6 +469,9 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       },
     },
     async ({ rules }) => {
+      if (!networkMockService.isRunning()) {
+        return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
+      }
       const parsed: NetworkMockRule[] = rules.map((r) => ({
         urlPattern: r.urlPattern,
         ...(r.method ? { method: r.method } : {}),
