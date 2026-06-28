@@ -1,0 +1,35 @@
+src/mcp/network-mocks/index.ts
+  beef5d4566d57c9a 1-6
+src/mcp/network-mocks/device-proxy.ts
+  beef5d4566d57c9a 1-45
+docs/network-mocks.md
+  beef5d4566d57c9a 1-155
+src/mcp/server.ts
+  beef5d4566d57c9a 17-19,44,209-227,249,253-255,288-291,310-313,369-574
+src/mcp/network-mocks/types.ts
+  beef5d4566d57c9a 1-18
+src/mcp/visual-flow/types.ts
+  beef5d4566d57c9a 110-154,160-165
+src/mcp/visual-flow/validate.ts
+  beef5d4566d57c9a 1,68-147,417-431,649-650,669
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "614492a6219bf2815befcaeb531fd888dfed9941",
+  "prompts": {
+    "beef5d4566d57c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d3f85f7-e445-4de8-882f-0dc8f2611a19",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 1363,
+      "total_deletions": 1,
+      "accepted_lines": 1363,
+      "overriden_lines": 0
+    }
+  }
+}
