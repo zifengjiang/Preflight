@@ -25,3 +25,8 @@ test("FAIL renders red verdict + failure banner with category/recommendation", (
   assert.match(html, /test-or-app-behavior/);
   assert.match(html, /增加 sleep/);
 });
+test("step free-text with </script> cannot break out of the inlined STEPS script", () => {
+  const evil = "</script><img src=x onerror=alert(1)>";
+  const html = renderEvidenceHTML({ run: { ...base }, steps: [{ ...steps[0], error: evil, title: evil }] });
+  assert.doesNotMatch(html, /<\/script><img/);
+});

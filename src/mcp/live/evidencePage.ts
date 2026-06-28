@@ -34,6 +34,27 @@ export interface RenderEvidenceInput {
   recordingRel?: string;
 }
 
+/**
+ * Serialize a value for safe inlining inside a `<script>` element. JSON.stringify
+ * does NOT escape `<` or the U+2028/U+2029 line separators, so step-derived free
+ * text (e.g. `step.error`, which echoes arbitrary app/page text) could contain
+ * `</script>` and terminate the element early — an XSS / page-corruption vector.
+ * Escaping these to their `\uXXXX` forms is parser-invisible: the JS string still
+ * decodes to the identical value at runtime.
+ */
+function inlineJSON(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/** YYYY-MM-DD from an ISO timestamp; empty string if unparseable. */
+function fmtDate(iso: string): string {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : "";
+}
+
 /** Wall-clock duration between two ISO timestamps as MM:SS (clamped at 0). */
 function fmtDuration(createdAt: string, updatedAt: string): string {
   const ms = Date.parse(updatedAt) - Date.parse(createdAt);
@@ -61,7 +82,9 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
     ? `${steps.length}/${steps.length}`
     : `卡在 ${failed ? failed.index : steps.length}/${steps.length}`;
 
-  const deviceLabel = [run.platform, run.resourceId].filter(Boolean).join(" · ");
+  // §4.1 meta tail: platform, device, appRef, and date.
+  const deviceLabel = [run.platform, run.resourceId, run.appRef].filter(Boolean).join(" · ");
+  const date = fmtDate(run.createdAt);
 
   // ── Verdict bar ───────────────────────────────────────────────
   const verdictBar =
@@ -70,6 +93,7 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
     + (run.testIntent ? `<span class="intent">${esc(run.testIntent)}</span>` : "")
     + `<span class="tail">`
     + (deviceLabel ? `<span class="meta">${esc(deviceLabel)}</span>` : "")
+    + (date ? `<span class="meta"><span class="v">${esc(date)}</span></span>` : "")
     + `<span class="meta">步骤 <span class="v">${esc(progress)}</span></span>`
     + `<span class="meta">耗时 <span class="v">${esc(duration)}</span></span>`
     + `</span></div>`;
@@ -137,7 +161,7 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
     // evidence page and the live page render steps identically. GLYPH and dataHTML
     // are injected; esc and escAttr are defined locally (identical to the module's)
     // because the injected builder bodies reference them as free identifiers.
-    const STEPS = ${JSON.stringify(steps)};
+    const STEPS = ${inlineJSON(steps)};
     let sel = ${JSON.stringify(sel ?? null)};
     const GLYPH = ${JSON.stringify(GLYPH)};
     function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
