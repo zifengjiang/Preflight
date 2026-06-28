@@ -1,4 +1,4 @@
-import { VISUAL_FLOW_VERSION, type VisualFlowDocument, type VisualFlowScriptVar, type VisualStep } from './types.js'
+import { VISUAL_FLOW_VERSION, type VisualFlowDocument, type VisualFlowScriptVar, type VisualStep, type NetworkMockRule, type NetworkMockResponse } from './types.js'
 
 const SET_VAR_METHODS = new Set(['aiQuery', 'aiAsk', 'aiBoolean', 'aiNumber', 'aiString'])
 const TRANSFORM_VAR_RULES = new Set(['onlyNumber', 'cut', 'jsonPath', 'replace', 'handleAmount'])
@@ -63,6 +63,86 @@ function parseScriptVars(raw: unknown): { ok: true; value: VisualFlowScriptVar[]
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0
+}
+
+function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: true; value: NetworkMockRule } | { ok: false; message: string } {
+  const urlPattern = typeof o.urlPattern === 'string' && o.urlPattern.trim() ? o.urlPattern.trim() : ""
+  const urlRegex = typeof o.urlRegex === 'string' && o.urlRegex.trim() ? o.urlRegex.trim() : ""
+  if (!urlPattern && !urlRegex) return { ok: false, message: `${path}.urlPattern 或 urlRegex 必填其一` }
+  if (urlPattern && urlPattern.length > 1000) return { ok: false, message: `${path}.urlPattern 过长` }
+  if (urlRegex) {
+    try { new RegExp(urlRegex); } catch { return { ok: false, message: `${path}.urlRegex 无效` }; }
+  }
+  const queryParams: Record<string, string> | undefined =
+    o.queryParams != null && typeof o.queryParams === 'object' && !Array.isArray(o.queryParams)
+      ? Object.fromEntries(Object.entries(o.queryParams as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
+      : undefined
+  const method = typeof o.method === 'string' ? o.method.trim().toUpperCase() : ''
+  if (method && !['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return { ok: false, message: `${path}.method 须为 GET|POST|PUT|DELETE|PATCH` }
+  if (!Array.isArray(o.responses) || o.responses.length === 0) return { ok: false, message: `${path}.responses 须为非空数组` }
+  if (o.responses.length > 50) return { ok: false, message: `${path}.responses 超过上限 50` }
+  const responses: NetworkMockResponse[] = []
+  for (let j = 0; j < o.responses.length; j++) {
+    const rPath = `${path}.responses[${j}]`
+    const ri = o.responses[j]
+    if (!ri || typeof ri !== 'object' || Array.isArray(ri)) return { ok: false, message: `${rPath} 须为对象` }
+    const r = ri as Record<string, unknown>
+    if (r.body == null) return { ok: false, message: `${rPath}.body 必填` }
+    const body = String(r.body)
+    if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }
+    const status = r.status != null ? Number(r.status) : 200
+    if (!Number.isFinite(status) || status < 100 || status > 599) return { ok: false, message: `${rPath}.status 须为 100～599` }
+    const callIndex = r.callIndex != null ? Number(r.callIndex) : undefined
+    if (callIndex != null && (!Number.isFinite(callIndex) || callIndex < 1)) return { ok: false, message: `${rPath}.callIndex 须为正整数` }
+    const delay = r.delay != null ? Number(r.delay) : undefined
+    if (delay != null && (!Number.isFinite(delay) || delay < 0 || delay > 60_000)) return { ok: false, message: `${rPath}.delay 须为 0～60000` }
+    const headers: Record<string, string> | undefined =
+      r.headers != null && typeof r.headers === 'object' && !Array.isArray(r.headers)
+        ? Object.fromEntries(Object.entries(r.headers as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
+        : undefined
+    const requestBodyMatch: Record<string, string> | undefined =
+      r.requestBodyMatch != null && typeof r.requestBodyMatch === 'object' && !Array.isArray(r.requestBodyMatch)
+        ? Object.fromEntries(Object.entries(r.requestBodyMatch as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
+        : undefined
+    responses.push({
+      status: Math.floor(status),
+      body,
+      ...(callIndex != null ? { callIndex: Math.floor(callIndex) } : {}),
+      ...(delay != null ? { delay: Math.floor(delay) } : {}),
+      ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(requestBodyMatch && Object.keys(requestBodyMatch).length > 0 ? { requestBodyMatch } : {}),
+    })
+  }
+  const description = typeof o.description === 'string' && o.description.trim() ? o.description.trim().slice(0, 500) : undefined
+  return {
+    ok: true,
+    value: {
+      ...(urlPattern ? { urlPattern } : {}),
+      ...(urlRegex ? { urlRegex } : {}),
+      ...(queryParams && Object.keys(queryParams).length > 0 ? { queryParams } : {}),
+      ...(method ? { method: method as NetworkMockRule['method'] } : {}),
+      responses,
+      ...(description ? { description } : {}),
+    },
+  }
+}
+
+function parseNetworkMocks(raw: unknown): { ok: true; value: NetworkMockRule[] } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: [] }
+  if (!Array.isArray(raw)) return { ok: false, message: 'visualFlow.networkMocks 须为数组' }
+  if (raw.length > 50) return { ok: false, message: 'mock 规则数量超过上限 50' }
+  const out: NetworkMockRule[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const path = `networkMocks[${i}]`
+    const item = raw[i]
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, message: `${path} 须为对象` }
+    }
+    const r = parseSingleMockRule(item as Record<string, unknown>, path)
+    if (!r.ok) return r
+    out.push(r.value)
+  }
+  return { ok: true, value: out }
 }
 
 function parseStep(raw: unknown, path: string): { ok: true; step: VisualStep } | { ok: false; message: string } {
@@ -334,6 +414,21 @@ function parseStep(raw: unknown, path: string): { ok: true; step: VisualStep } |
         },
       }
     }
+    case 'setMock': {
+      if (!o.rule || typeof o.rule !== 'object' || Array.isArray(o.rule)) {
+        return { ok: false, message: `${path}.rule 须为 NetworkMockRule 对象` }
+      }
+      const mockParsed = parseSingleMockRule(o.rule as Record<string, unknown>, `${path}.rule`)
+      if (!mockParsed.ok) return mockParsed
+      return { ok: true, step: { type: 'setMock', rule: mockParsed.value } }
+    }
+    case 'removeMock': {
+      if (!isNonEmptyString(o.urlPattern)) return { ok: false, message: `${path}.urlPattern 必填` }
+      return { ok: true, step: { type: 'removeMock', urlPattern: o.urlPattern.trim() } }
+    }
+    case 'clearMocks': {
+      return { ok: true, step: { type: 'clearMocks' } }
+    }
     default:
       return { ok: false, message: `${path}.type 应使用 IR 步骤类型表中的枚举` }
   }
@@ -551,6 +646,8 @@ export function tryParseVisualFlow(raw: unknown): { ok: true; value: VisualFlowD
   }
   const scriptVarsParsed = parseScriptVars(o.scriptVars)
   if (!scriptVarsParsed.ok) return scriptVarsParsed
+  const networkMocksParsed = parseNetworkMocks(o.networkMocks)
+  if (!networkMocksParsed.ok) return networkMocksParsed
   const steps: VisualStep[] = []
   for (let i = 0; i < o.steps.length; i++) {
     const r = parseStep(o.steps[i], `steps[${i}]`)
@@ -569,6 +666,7 @@ export function tryParseVisualFlow(raw: unknown): { ok: true; value: VisualFlowD
       version: VISUAL_FLOW_VERSION,
       ...(scriptVarsParsed.value.length ? { scriptVars: scriptVarsParsed.value } : {}),
       steps,
+      ...(networkMocksParsed.value.length ? { networkMocks: networkMocksParsed.value } : {}),
     },
   }
 }

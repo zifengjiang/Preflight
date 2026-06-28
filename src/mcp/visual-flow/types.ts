@@ -107,9 +107,60 @@ export type VisualStep =
       /** 经 `scopeId` 归并后的扁平变量名 → 值；保存编排时并入用例 `scriptTemplateVars[scopeId]` */
       varBindings: Record<string, string>
     }
+  /** Add or replace a network mock rule during test execution. */
+  | { type: 'setMock'; rule: NetworkMockRule }
+  /** Remove a network mock rule by urlPattern match. */
+  | { type: 'removeMock'; urlPattern: string }
+  /** Clear all network mock rules. */
+  | { type: 'clearMocks' }
+
+export interface NetworkMockResponse {
+  /** HTTP status code (default: 200) */
+  status?: number
+  /** Response body, typically a JSON string */
+  body: string
+  /**
+   * Key-value pairs that must be present (with matching values) in the JSON
+   * request body for this response to match. Omit to match any body.
+   */
+  requestBodyMatch?: Record<string, string>
+  /**
+   * Only apply on the nth matching call to this URL pattern (1-based).
+   * Enables stateful sequences: first call returns an error, second succeeds, etc.
+   */
+  callIndex?: number
+  /** Optional response headers */
+  headers?: Record<string, string>
+  /** Delay in ms before responding (simulates network latency) */
+  delay?: number
+}
+
+export interface NetworkMockRule {
+  /**
+   * Substring to match against the full request URL.
+   * The first rule whose urlPattern is a substring of the request URL wins.
+   */
+  urlPattern?: string
+  /** Regex pattern to match against the full request URL. Overrides urlPattern if both set. */
+  urlRegex?: string
+  /** Key-value pairs that must be present in the request URL query string. */
+  queryParams?: Record<string, string>
+  /** HTTP method to match (default: matches any method) */
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+  /** Ordered response variants. The first matching response is returned. */
+  responses: NetworkMockResponse[]
+  /** Human-readable description */
+  description?: string
+}
 
 export interface VisualFlowDocument {
   version: typeof VISUAL_FLOW_VERSION
   scriptVars?: VisualFlowScriptVar[]
   steps: VisualStep[]
+  /**
+   * Network mock rules applied before the test runs.
+   * Matching HTTP requests are intercepted and return mock responses;
+   * non-matching traffic is forwarded transparently.
+   */
+  networkMocks?: NetworkMockRule[]
 }
