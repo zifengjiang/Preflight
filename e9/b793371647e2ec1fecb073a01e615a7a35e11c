@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e9b793371647e2ec1fecb073a01e615a7a35e11c",
+  "prompts": {
+    "ffaa76e257bd4aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76328e6-3ec6-43fd-b166-78eb082acf80",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 259,
+      "overriden_lines": 0
+    }
+  }
+}
