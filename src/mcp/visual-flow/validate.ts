@@ -1,4 +1,5 @@
 import { VISUAL_FLOW_VERSION, type VisualFlowDocument, type VisualFlowScriptVar, type VisualStep, type NetworkMockRule, type NetworkMockResponse } from './types.js'
+import { compileHandler } from '../network-mocks/handler.js'
 
 const SET_VAR_METHODS = new Set(['aiQuery', 'aiAsk', 'aiBoolean', 'aiNumber', 'aiString'])
 const TRANSFORM_VAR_RULES = new Set(['onlyNumber', 'cut', 'jsonPath', 'replace', 'handleAmount'])
@@ -128,6 +129,9 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
   }
 
   const handler = hasHandler ? (o.handler as string).trim() : undefined
+  if (handler) {
+    try { compileHandler(handler) } catch { return { ok: false, message: `${path}.handler JS 语法错误` } }
+  }
   const description = typeof o.description === 'string' && o.description.trim() ? o.description.trim().slice(0, 500) : undefined
   return {
     ok: true,

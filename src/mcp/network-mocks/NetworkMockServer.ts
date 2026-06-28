@@ -2,6 +2,8 @@ import { createServer, request as httpRequest, IncomingMessage, ServerResponse, 
 import { request as httpsRequest } from "node:https";
 import { connect as netConnect } from "node:net";
 import type { NetworkMockRule, NetworkMockResponse, NetworkMockStats } from "./types.js";
+import { compileHandlerInvocation, runHandler, type HandlerReq, type HandlerResp } from "./handler.js";
+import vm from "node:vm";
 import tls from "node:tls";
 import { TLSSocket } from "node:tls";
 import { execSync } from "node:child_process";
@@ -39,6 +41,8 @@ export class NetworkMockServer {
   private mitmHttpServer: Server | null = null;
   private recording = false;
   private recorded: { url: string; method: string; requestBody: string; responseBody: string; status: number }[] = [];
+  /** Per-rule compiled handler invocation script, keyed by getRuleKey; compiled once at start()/updateRules(). */
+  private handlerScripts = new Map<string, vm.Script>();
   private static readonly REQ_BODY_CAP = 10_000;
   private static readonly RES_BODY_CAP = 500_000;
 
@@ -50,6 +54,7 @@ export class NetworkMockServer {
     for (const rule of rules) {
       this.callCounts.set(getRuleKey(rule), 0);
     }
+    this.compileHandlers();
     this.mitmHttpServer = createServer((req, res) => {
       // hostname/port are stored on the socket during handleConnectEvent
       const sock = req.socket as any;
@@ -180,6 +185,22 @@ export class NetworkMockServer {
     for (const rule of rules) {
       this.callCounts.set(getRuleKey(rule), 0);
     }
+    this.compileHandlers();
+  }
+
+  /**
+   * Compile each rule's handler invocation once and cache by rule key. Validation already
+   * syntax-checks handlers, but compile defensively here and skip a rule whose handler fails to
+   * compile (it then falls through to passthrough rather than throwing at request time).
+   */
+  private compileHandlers(): void {
+    this.handlerScripts.clear();
+    for (const rule of this.rules) {
+      if (!rule.handler) continue;
+      try {
+        this.handlerScripts.set(getRuleKey(rule), compileHandlerInvocation(rule.handler));
+      } catch { /* skip uncompilable handler → passthrough */ }
+    }
   }
 
   setRecording(enabled: boolean): void {
@@ -249,9 +270,15 @@ export class NetworkMockServer {
     if (clientReq.method === "CONNECT") return;
     const requestUrl = this.resolveUrl(clientReq);
     if (!requestUrl) { clientRes.writeHead(400); clientRes.end(); return; }
+    const method = clientReq.method ?? "GET";
+    const rule = this.findMatchingRule(method, requestUrl);
+    if (rule?.handler) {
+      void this.handleViaHandler(rule, clientReq, clientRes, requestUrl, false);
+      return;
+    }
     // NOTE: requestBodyMatch matching remains a known limitation — the request body is not buffered
     // before findMatch (it is teed during forward, which is too late for matching).
-    const match = this.findMatch(clientReq.method ?? "GET", requestUrl);
+    const match = this.findMatch(method, requestUrl);
     match ? this.serveMock(match, clientRes) : this.forwardRequest(clientReq, clientRes, requestUrl);
   }
 
@@ -265,21 +292,180 @@ export class NetworkMockServer {
     return null;
   }
 
+  // ── Inline JS handler dispatch ──
+
+  /**
+   * Run a matched rule's inline JS handler. Buffers the full request body (so the handler can read
+   * rawBody/json), provides ctx.fetchReal (a single memoized upstream fetch), then either serves the
+   * HandlerResp or — on null/throw/timeout — falls through to the real response. The upstream is
+   * fetched at most once: if the handler awaited fetchReal and then returned null, the buffered real
+   * response is reused for the passthrough rather than re-sent.
+   */
+  private async handleViaHandler(
+    rule: NetworkMockRule,
+    clientReq: IncomingMessage,
+    clientRes: ServerResponse,
+    url: URL,
+    isHttps: boolean,
+    hostname = url.hostname,
+    port = isHttps ? 443 : Number(url.port) || 80,
+  ): Promise<void> {
+    const method = clientReq.method ?? "GET";
+    const headers: Record<string, unknown> = { ...clientReq.headers };
+    delete headers["proxy-connection"];
+    delete headers["proxy-authorization"];
+
+    const rawBody = await this.readBody(clientReq);
+    const contentType = String(clientReq.headers["content-type"] ?? "").toLowerCase();
+    let json: unknown;
+    if (rawBody && contentType.includes("json")) {
+      try { json = JSON.parse(rawBody); } catch { json = undefined; }
+    }
+    const req: HandlerReq = {
+      method,
+      host: url.hostname,
+      path: url.pathname,
+      query: Object.fromEntries(url.searchParams),
+      headers,
+      rawBody,
+      json,
+    };
+
+    // Memoize the real upstream fetch so it runs at most once across fetchReal + passthrough.
+    let realPromise: Promise<{ status: number; headers: Record<string, unknown>; body: string }> | null = null;
+    const fetchReal = () => {
+      if (!realPromise) realPromise = this.fetchUpstream(method, url, headers, rawBody, isHttps, hostname, port);
+      return realPromise;
+    };
+
+    const resp = await runHandler(rule.handler!, req, { fetchReal }, 5000, this.handlerScripts.get(getRuleKey(rule)));
+
+    if (resp != null) {
+      this.serveHandlerResp(resp, clientRes);
+      return;
+    }
+    // Fall through to the real response (passthrough). Reuse the buffered upstream if fetchReal ran.
+    try {
+      const real = await fetchReal();
+      if (!clientRes.headersSent) { clientRes.writeHead(real.status, real.headers as any); clientRes.end(real.body); }
+    } catch {
+      if (!clientRes.headersSent) { clientRes.writeHead(502); clientRes.end("Bad Gateway"); }
+    }
+  }
+
+  /** Read a request body into a capped string (REQ_BODY_CAP). Resolves once the stream ends. */
+  private readBody(req: IncomingMessage): Promise<string> {
+    return new Promise((resolve) => {
+      const chunks: Buffer[] = [];
+      let captured = 0;
+      req.on("data", (chunk: Buffer) => {
+        if (captured < NetworkMockServer.REQ_BODY_CAP) {
+          const take = chunk.subarray(0, NetworkMockServer.REQ_BODY_CAP - captured);
+          chunks.push(take);
+          captured += take.length;
+        }
+      });
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+      req.on("error", () => resolve(Buffer.concat(chunks).toString()));
+    });
+  }
+
+  /**
+   * Perform the real upstream request with a buffered body and resolve the FULLY buffered response
+   * (capped at RES_BODY_CAP). Used by ctx.fetchReal and the handler-null passthrough.
+   */
+  private fetchUpstream(
+    method: string,
+    url: URL,
+    headers: Record<string, unknown>,
+    body: string,
+    isHttps: boolean,
+    hostname: string,
+    port: number,
+  ): Promise<{ status: number; headers: Record<string, unknown>; body: string }> {
+    return new Promise((resolve, reject) => {
+      const outHeaders: Record<string, unknown> = { ...headers };
+      // We send a buffered body; drop any client-provided content-length so the client recomputes it.
+      delete outHeaders["content-length"];
+      const opts: any = {
+        hostname,
+        port,
+        path: url.pathname + url.search,
+        method,
+        headers: outHeaders,
+        ...(isHttps ? { rejectUnauthorized: false } : {}),
+      };
+      const reqFn = isHttps ? httpsRequest : httpRequest;
+      const pr = reqFn(opts, (pres) => {
+        const chunks: Buffer[] = [];
+        let captured = 0;
+        pres.on("data", (chunk: Buffer) => {
+          if (captured < NetworkMockServer.RES_BODY_CAP) {
+            const take = chunk.subarray(0, NetworkMockServer.RES_BODY_CAP - captured);
+            chunks.push(take);
+            captured += take.length;
+          }
+        });
+        pres.on("end", () => resolve({ status: pres.statusCode ?? 502, headers: pres.headers, body: Buffer.concat(chunks).toString() }));
+        pres.on("error", reject);
+      });
+      pr.on("error", reject);
+      if (body) pr.write(body);
+      pr.end();
+    });
+  }
+
+  /** Serve a handler-produced response: object body → JSON; merge handler headers; mark as mock. */
+  private serveHandlerResp(resp: HandlerResp, res: ServerResponse): void {
+    const status = resp.status ?? 200;
+    const handlerHeaders = resp.headers ?? {};
+    let body: string;
+    const outHeaders: Record<string, string> = { "X-Preflight-Mock": "true", ...handlerHeaders };
+    if (typeof resp.body === "string") {
+      body = resp.body;
+    } else if (resp.body == null) {
+      body = "";
+    } else {
+      body = JSON.stringify(resp.body);
+      const hasContentType = Object.keys(handlerHeaders).some((h) => h.toLowerCase() === "content-type");
+      if (!hasContentType) outHeaders["Content-Type"] = "application/json; charset=utf-8";
+    }
+    res.writeHead(status, outHeaders);
+    res.end(body);
+  }
+
+  /**
+   * Shared host/path/method/query gate for a single rule. Used by both findMatch (static-response
+   * selection) and findMatchingRule (rule dispatch incl. handler-only rules). A bad regex fails closed.
+   */
+  private ruleGates(rule: NetworkMockRule, method: string, url: URL): boolean {
+    try { if (!new RegExp(rule.hostRegex).test(url.hostname)) return false; } catch { return false; }
+    if (rule.pathPattern && !url.pathname.includes(rule.pathPattern)) return false;
+    if (rule.pathRegex) { try { if (!new RegExp(rule.pathRegex).test(url.pathname)) return false; } catch { return false; } }
+    if (rule.method && rule.method.toUpperCase() !== method.toUpperCase()) return false;
+    if (rule.queryParams) {
+      for (const [k, v] of Object.entries(rule.queryParams)) { if (url.searchParams.get(k) !== v) return false; }
+    }
+    return true;
+  }
+
+  /**
+   * First gate-matching rule that actually produces a mock (has `handler` or `responses`).
+   * Record-only rules (neither) are skipped so a later mock rule on the same host still wins —
+   * mirroring findMatch's fall-through. The mock point uses this to dispatch handler-only rules
+   * (which findMatch can't surface) without letting an earlier record-only rule swallow them.
+   */
+  private findMatchingRule(method: string, url: URL): NetworkMockRule | null {
+    for (const rule of this.rules) {
+      if (!this.ruleGates(rule, method, url)) continue;
+      if (rule.handler || (rule.responses && rule.responses.length > 0)) return rule;
+    }
+    return null;
+  }
+
   private findMatch(method: string, url: URL, reqBody?: Record<string, unknown>): NetworkMockResponse | null {
     for (const rule of this.rules) {
-      // Host gate: hostRegex must match the request hostname
-      try { if (!new RegExp(rule.hostRegex).test(url.hostname)) continue; } catch { continue; }
-      // Path gate: pathPattern (substring) and/or pathRegex; both omitted = all paths
-      if (rule.pathPattern && !url.pathname.includes(rule.pathPattern)) continue;
-      if (rule.pathRegex) { try { if (!new RegExp(rule.pathRegex).test(url.pathname)) continue; } catch { continue; } }
-      // Method gate
-      if (rule.method && rule.method.toUpperCase() !== method.toUpperCase()) continue;
-      // Query params gate
-      if (rule.queryParams) {
-        let qm = true;
-        for (const [k, v] of Object.entries(rule.queryParams)) { if (url.searchParams.get(k) !== v) { qm = false; break; } }
-        if (!qm) continue;
-      }
+      if (!this.ruleGates(rule, method, url)) continue;
       // Record-only (no responses/handler): host matched but no mock response.
       // Fall through so a later mock rule on the same host can still match;
       // do NOT increment callCount for record-only rules.
@@ -432,11 +618,17 @@ export class NetworkMockServer {
     const fullUrl = `https://${hostname}${innerReq.url ?? "/"}`;
     let url: URL;
     try { url = new URL(fullUrl); } catch { innerRes.writeHead(400); innerRes.end(); return; }
+    const method = innerReq.method ?? "GET";
+    const rule = this.findMatchingRule(method, url);
+    if (rule?.handler) {
+      await this.handleViaHandler(rule, innerReq, innerRes, url, true, hostname, port);
+      return;
+    }
     // NOTE: requestBodyMatch matching remains a known limitation — the request body is not buffered
     // before findMatch (it is teed during forward, which is too late for matching).
-    const match = this.findMatch(innerReq.method ?? "GET", url);
+    const match = this.findMatch(method, url);
     if (match) {
-      if (this.recording) this.recordMatched(url.toString(), innerReq.method ?? "GET", match);
+      if (this.recording) this.recordMatched(url.toString(), method, match);
       this.serveMock(match, innerRes);
     } else {
       this.forwardHttpsRequest(innerReq, innerRes, hostname, port, this.recording ? url.toString() : undefined);
