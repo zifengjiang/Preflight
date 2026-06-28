@@ -1,5 +1,4 @@
 import sharp from "sharp";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { AgentArtifact, EvidenceRun } from "../types.js";
@@ -40,8 +39,12 @@ export async function buildEvidenceCardPng(input: { runDir: string; run: CardRun
     const rel = s.screenshots[s.screenshots.length - 1]!;
     const abs = join(runDir, rel);
     if (!existsSync(abs)) return null;
-    const buf = await sharp(abs).resize(FRAME_W, FRAME_H, { fit: "cover" }).png().toBuffer();
-    return { step: s, b64: buf.toString("base64"), decisive: s === decisive };
+    try {
+      const buf = await sharp(abs).resize(FRAME_W, FRAME_H, { fit: "cover" }).png().toBuffer();
+      return { step: s, b64: buf.toString("base64"), decisive: s === decisive };
+    } catch {
+      return null;
+    }
   }))).filter(Boolean) as { step: TimelineStep; b64: string; decisive: boolean }[];
   if (!loaded.length) return null;
 

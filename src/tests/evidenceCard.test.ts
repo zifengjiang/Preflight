@@ -34,3 +34,11 @@ test("returns null when no step has a screenshot", async () => {
   const b64 = await buildEvidenceCardPng({ runDir, run, steps: [{ index: 1, title: "x", status: "finished" as const, summary: "", screenshots: [] }] });
   assert.equal(b64, null);
 });
+
+test("returns a PNG for a FAIL run", async () => {
+  const runDir = await fixtureRunDir();
+  const steps = [{ index: 1, title: "tap", status: "failed" as const, summary: "", screenshots: ["assets/screenshots/a.png"] }];
+  const failRun = { ...run, status: "FAILED", failureAnalysis: { category: "test-or-app-behavior", summary: "Element not found", recommendation: "" } };
+  const b64 = await buildEvidenceCardPng({ runDir, run: failRun, steps });
+  assert.ok(b64 && b64.length > 100);
+});
