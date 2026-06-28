@@ -6,7 +6,7 @@ import { buildTimelineFromReportDir, mergeWithVisualFlow, resolveActiveReportDir
 import { extractFlowStepEventsFromRun } from "./flowStepEvents.js";
 import { probeForegroundBundleId } from "./live/foregroundProbe.js";
 import { resolveStreamPlan } from "./live/streamSource.js";
-import { proxyMjpeg, spawnFfmpegMjpeg, writeMjpegHeaders } from "./live/deviceStream.js";
+import { proxyMjpeg, spawnFfmpegMjpeg, spawnScrcpyMjpeg, writeMjpegHeaders } from "./live/deviceStream.js";
 import { renderLivePage } from "./live/page.js";
 
 export interface LiveViewerServer {
@@ -146,6 +146,10 @@ function createLiveViewerServer(runManager: RunManager): Server {
           return;
         }
         writeMjpegHeaders(res);
+        if (plan.kind === "scrcpy-ffmpeg") {
+          await spawnScrcpyMjpeg(res, plan);
+          return;
+        }
         await spawnFfmpegMjpeg(res, plan.producer);
         return;
       }
