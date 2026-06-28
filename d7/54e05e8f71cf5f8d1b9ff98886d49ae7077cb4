@@ -1,0 +1,31 @@
+src/tests/streamSource.test.ts
+  10dfe2301bf24cde 10,12-16,19-20
+src/mcp/live/streamSource.ts
+  10dfe2301bf24cde 5,15,20-23
+src/tests/deviceStream.test.ts
+  10dfe2301bf24cde 7-13,42-71
+src/mcp/live/deviceStream.ts
+  10dfe2301bf24cde 2,5-6,89-278
+src/mcp/liveViewer.ts
+  10dfe2301bf24cde 9,149-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d754e05e8f71cf5f8d1b9ff98886d49ae7077cb4",
+  "prompts": {
+    "10dfe2301bf24cde": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d12159f1-7c00-4836-8b29-28f2bd4891bf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 249,
+      "total_deletions": 8,
+      "accepted_lines": 249,
+      "overriden_lines": 0
+    }
+  }
+}
