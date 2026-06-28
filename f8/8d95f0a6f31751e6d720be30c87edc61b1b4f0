@@ -1,0 +1,31 @@
+src/mcp/runManager.ts
+  ffaa76e257bd4aa3 84-86
+src/tests/runReportPaths.test.ts
+  ffaa76e257bd4aa3 19-30
+src/mcp/live/runReportPaths.ts
+  ffaa76e257bd4aa3 6-12
+src/mcp/evidence.ts
+  ffaa76e257bd4aa3 5,31-34,36-41,46
+src/tests/evidence.test.ts
+  ffaa76e257bd4aa3 116-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f88d95f0a6f31751e6d720be30c87edc61b1b4f0",
+  "prompts": {
+    "ffaa76e257bd4aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76328e6-3ec6-43fd-b166-78eb082acf80",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 92,
+      "total_deletions": 18,
+      "accepted_lines": 318,
+      "overriden_lines": 0
+    }
+  }
+}
