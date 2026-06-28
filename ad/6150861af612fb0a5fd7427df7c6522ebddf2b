@@ -1,0 +1,25 @@
+src/tests/evidenceAssets.test.ts
+  ffaa76e257bd4aa3 3,21,25-46
+src/mcp/live/evidenceAssets.ts
+  ffaa76e257bd4aa3 2,17-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ad6150861af612fb0a5fd7427df7c6522ebddf2b",
+  "prompts": {
+    "ffaa76e257bd4aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76328e6-3ec6-43fd-b166-78eb082acf80",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 31,
+      "total_deletions": 5,
+      "accepted_lines": 31,
+      "overriden_lines": 0
+    }
+  }
+}
