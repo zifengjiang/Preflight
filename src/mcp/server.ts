@@ -15,7 +15,6 @@ import { compileVisualFlow, validateVisualFlow } from "./visual-flow/index.js";
 import { registerExplorationTools } from "./exploration/index.js";
 import { createMidsceneSessionFromResourceId, ensureIosWdaStarted } from "./exploration/tools-session.js";
 import { NetworkMockService } from "./network-mocks/NetworkMockService.js";
-import { proxyHostForPlatform } from "./network-mocks/device-proxy.js";
 import type { NetworkMockRule } from "./visual-flow/types.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -496,30 +495,6 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       const cert = networkMockService.getRootCACert();
       if (!cert) return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
       return { content: [{ type: "text" as const, text: cert }] };
-    },
-  );
-
-  server.registerTool(
-    "get_mobile_config",
-    {
-      title: "Get iOS Mobile Config",
-      description:
-        "Generate an iOS .mobileconfig profile that installs the CA certificate AND configures the WiFi proxy " +
-        "in one step. Send this file to the iOS device (e.g. AirDrop), open it to install. " +
-        "After installation, go to Settings > General > About > Certificate Trust Settings > enable 'Preflight Mock CA'. " +
-        "The proxy host will be auto-detected as this machine's local IP. " +
-        "Only available when network mocks are running.",
-    },
-    async () => {
-      if (!networkMockService.isRunning()) {
-        return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
-      }
-      const port = networkMockService.getStats().port;
-      if (!port) return jsonResult({ ok: false, message: "mock server port unknown" });
-      const proxyHost = proxyHostForPlatform("ios") === "127.0.0.1" ? "172.23.166.53" : proxyHostForPlatform("ios");
-      const config = networkMockService.generateMobileConfig(proxyHost, port);
-      if (!config) return jsonResult({ ok: false, message: "failed to generate mobileconfig" });
-      return { content: [{ type: "text" as const, text: config }] };
     },
   );
 

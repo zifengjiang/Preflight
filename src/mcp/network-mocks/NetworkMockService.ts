@@ -183,10 +183,6 @@ export class NetworkMockService {
     return this.server.getRootCACert();
   }
 
-  generateMobileConfig(proxyHost: string, proxyPort: number): string | null {
-    return this.server.generateMobileConfig(proxyHost, proxyPort);
-  }
-
   setRecording(enabled: boolean): void { this.server.setRecording(enabled); }
   isRecording(): boolean { return this.server.isRecording(); }
   getRecordedCount(): number { return this.server.getRecordedCount(); }
