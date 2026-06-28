@@ -25,6 +25,22 @@ export async function adbRoot(serial: string, run: Runner = defaultRunner): Prom
   await waitRun("adb", ["-s", serial, "wait-for-device"]);
 }
 
+/**
+ * Interpret the stdout of `adb -s <serial> root`.
+ *
+ * Returns true when adbd confirmed it is (or will be) running as root.
+ * Returns false for the production-build refusal ("cannot run as root") and
+ * for any unrecognised output — we lean toward false so the doctor note is
+ * shown rather than silently suppressed.
+ */
+export function isRootableAdbOutput(rootStdout: string): boolean {
+  if (rootStdout.includes("cannot run as root")) return false;
+  if (rootStdout.includes("restarting adbd as root")) return true;
+  if (rootStdout.includes("already running as root")) return true;
+  // Unknown output → treat as not-confirmed-rootable so the doctor note fires.
+  return false;
+}
+
 export async function ensureCaInstalled(
   opts: { serial: string; caPemPath: string; mode?: "user" | "system" },
   run: Runner = defaultRunner,

@@ -1,9 +1,13 @@
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentHealth } from "./types.js";
+import { isRootableAdbOutput } from "./network-mocks/device-ca.js";
+
+const pExecFile = promisify(execFile);
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -127,6 +131,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   checks.push(await commandCheck("ios-xcode", "iOS Xcode tools", "xcrun", commandExists, "iOS tests need Xcode command line tools."));
   checks.push(await commandCheck("ios-iproxy", "iOS iproxy", "iproxy", commandExists, "iOS WDA live view needs iproxy."));
   checks.push(await iosWdaHealthCheck(deps.env));
+  await androidEmulatorRootableCheck(checks);
 
   const blocking = checks.filter((check) => check.status === "fail");
   const nonPass = checks.filter((check) => check.status !== "pass");
@@ -135,6 +140,43 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
     summary: blocking.length === 0 ? "All blocking checks passed." : `${blocking.length} blocking issue(s) found.`,
     checks: nonPass,
   };
+}
+
+/**
+ * Non-blocking check: if an Android emulator is attached, run `adb -s <serial> root`
+ * and warn when the image is a production (Play Store) build that refuses root.
+ * Network mock CA install requires a rootable (non-Play) emulator image.
+ * Skips silently when adb is unavailable or no emulator serial is found.
+ *
+ * Note: `adb root` restarts adbd as a side-effect — acceptable for a diagnostic
+ * command; gated to emulators only (never runs against real device serials).
+ */
+async function androidEmulatorRootableCheck(checks: DoctorCheck[]): Promise<void> {
+  try {
+    // List attached devices and find the first emulator serial.
+    const devicesOut = await pExecFile("adb", ["devices"], { timeout: 8_000 }).then((r) => r.stdout).catch(() => "");
+    const emulatorSerial = devicesOut
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.startsWith("emulator-") && l.includes("device"))
+      ?.split(/\s+/)[0];
+    if (!emulatorSerial) return; // no emulator connected — skip silently
+
+    const rootOut = await pExecFile("adb", ["-s", emulatorSerial, "root"], { timeout: 10_000 })
+      .then((r) => r.stdout)
+      .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+
+    if (!isRootableAdbOutput(rootOut)) {
+      checks.push({
+        id: "android-emulator-rootable",
+        title: "Android Emulator Rootable Image",
+        status: "warn",
+        message: `network mock requires a rootable (non-Play) image — emulator ${emulatorSerial} returned: "${rootOut.trim()}"`,
+      });
+    }
+  } catch {
+    // adb not available or unexpected error — skip silently (mock is optional)
+  }
 }
 
 async function commandCheck(
