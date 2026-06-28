@@ -5,6 +5,7 @@ import { AgentHttpClient } from "./agentHttpClient.js";
 import { AgentRuntimeManager } from "./agentRuntime.js";
 import { runDoctor } from "./doctor.js";
 import { writeEvidence } from "./evidence.js";
+import { buildSaveReportContent } from "./live/saveReportContent.js";
 import { startLiveViewer } from "./liveViewer.js";
 import { RunManager } from "./runManager.js";
 import { summarizeRun } from "./runSummary.js";
@@ -294,16 +295,21 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       const run = runManager.getRun(runId);
       if (!run) throw new Error(`Unknown runId: ${runId}`);
       const summary = summarizeRun(run);
-      return jsonResult(
-        await writeEvidence({
-          outputRoot: preflightHome,
-          run: {
-            ...run,
-            status: summary.status,
-            failureAnalysis: summary.failureAnalysis,
-          },
-        }),
+      const evidence = await writeEvidence({
+        outputRoot: preflightHome,
+        run: {
+          ...run,
+          status: summary.status,
+          failureAnalysis: summary.failureAnalysis,
+          reportDir: run.reportDir,
+        },
+      });
+      const summaryText = JSON.stringify(
+        { status: summary.status, evidencePath: evidence.evidencePath, failureAnalysis: summary.failureAnalysis },
+        null,
+        2,
       );
+      return { content: buildSaveReportContent({ summaryText, evidencePath: evidence.evidencePath, cardPngBase64: evidence.cardPngBase64 }) };
     },
   );
 

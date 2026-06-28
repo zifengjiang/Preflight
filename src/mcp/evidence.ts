@@ -2,6 +2,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { EvidenceRun } from "./types.js";
+import { buildTimelineFromReportDir, mergeWithVisualFlow, resolveActiveReportDir, type TimelineView, type TimelineStep } from "./live/dumpTimeline.js";
+import { copyRunAssets } from "./live/evidenceAssets.js";
+import { renderEvidenceHTML } from "./live/evidencePage.js";
+import { buildEvidenceCardPng } from "./live/evidenceCard.js";
 
 export interface WriteEvidenceInput {
   run: EvidenceRun;
@@ -12,62 +16,48 @@ export interface WriteEvidenceResult {
   runDir: string;
   evidencePath: string;
   metadataPath: string;
+  cardPngBase64?: string;
 }
 
 export async function writeEvidence(input: WriteEvidenceInput): Promise<WriteEvidenceResult> {
   const runDir = join(input.outputRoot ?? join(homedir(), ".preflight"), "self-test-runs", input.run.runId);
   await mkdir(runDir, { recursive: true });
-  const evidencePath = join(runDir, "evidence.md");
+  const evidencePath = join(runDir, "evidence.html");
   const metadataPath = join(runDir, "metadata.json");
 
-  await writeFile(evidencePath, renderEvidenceMarkdown(input.run), "utf8");
+  let view: TimelineView;
+  let assets: { steps: TimelineStep[]; recordingRel?: string };
+  if (input.run.reportDir) {
+    // run.reportDir is the report ROOT; this run's execution JSON + screenshots + recording
+    // live in a per-run subdir. Resolve it the same way the live viewer does, else evidence
+    // reads the empty root and produces no steps/assets.
+    let activeDir = input.run.reportDir;
+    try {
+      activeDir = await resolveActiveReportDir(input.run.reportDir, Date.parse(input.run.createdAt));
+    } catch {
+      // fall back to the configured reportDir
+    }
+    try {
+      view = mergeWithVisualFlow(await buildTimelineFromReportDir(activeDir), input.run.visualFlow);
+    } catch {
+      view = { revision: 0, steps: [] };
+    }
+    try {
+      assets = await copyRunAssets({ reportDir: activeDir, runDir, steps: view.steps });
+    } catch {
+      assets = { steps: view.steps, recordingRel: undefined };
+    }
+  } else {
+    view = { revision: 0, steps: [] };
+    assets = { steps: [], recordingRel: undefined };
+  }
+
+  await writeFile(evidencePath, renderEvidenceHTML({ run: input.run, steps: assets.steps, recordingRel: assets.recordingRel }), "utf8");
   await writeFile(metadataPath, JSON.stringify(input.run, null, 2), "utf8");
 
-  return { runDir, evidencePath, metadataPath };
-}
-
-function renderEvidenceMarkdown(run: EvidenceRun): string {
-  const artifactLines = run.artifacts.length
-    ? run.artifacts.map((artifact) => `- ${artifact.type}: ${artifact.uri}`).join("\n")
-    : "- 暂无产物";
-  return `# 自测留痕
-
-- 结果：${run.status}
-- 时间：${run.createdAt} -> ${run.updatedAt}
-- 平台：${run.platform ?? "unknown"}
-- 设备：${run.resourceId ?? "auto"}
-- App 包：${run.appRef ?? "未指定"}
-- Task ID：${run.taskId}
-- Run ID：${run.runId}
-- Live Viewer：${run.liveUrl}
-
-## 测试意图
-
-${run.testIntent ?? "未填写"}
-
-## 执行脚本
-
-\`\`\`ts
-${run.script ?? ""}
-\`\`\`
-
-## Visual Flow
-
-\`\`\`json
-${run.visualFlow ? JSON.stringify(run.visualFlow, null, 2) : "{}"}
-\`\`\`
-
-## 结果摘要
-
-${run.failureAnalysis.summary}
-
-## 失败原因
-
-- 分类：${run.failureAnalysis.category}
-- 建议：${run.failureAnalysis.recommendation}
-
-## 产物
-
-${artifactLines}
-`;
+  let cardPngBase64: string | undefined;
+  try {
+    cardPngBase64 = (await buildEvidenceCardPng({ runDir, run: input.run, steps: assets.steps })) ?? undefined;
+  } catch { cardPngBase64 = undefined; }
+  return { runDir, evidencePath, metadataPath, cardPngBase64 };
 }
