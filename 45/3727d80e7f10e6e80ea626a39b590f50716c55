@@ -1,0 +1,27 @@
+src/tests/timelineMarkup.test.ts
+  ffaa76e257bd4aa3 1-35
+src/mcp/live/page.ts
+  ffaa76e257bd4aa3 17-18,398,479-488,503-508
+src/mcp/live/timelineMarkup.ts
+  ffaa76e257bd4aa3 1-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "453727d80e7f10e6e80ea626a39b590f50716c55",
+  "prompts": {
+    "ffaa76e257bd4aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76328e6-3ec6-43fd-b166-78eb082acf80",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 133,
+      "total_deletions": 39,
+      "accepted_lines": 119,
+      "overriden_lines": 0
+    }
+  }
+}
