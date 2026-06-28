@@ -14,6 +14,8 @@
  * prefers-reduced-motion: no-preference. Loading / empty / reconnect states are
  * intentionally out of scope here (Task 9) but the structure leaves room for them.
  */
+import { stepCollapsedHTML, stepExpandedHTML, dataHTML, GLYPH } from "./timelineMarkup.js";
+
 export function renderLivePage(runId: string): string {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -393,7 +395,7 @@ export function renderLivePage(runId: string): string {
     const apiUrl = '/api/runs/' + encodeURIComponent(runId);
     const TERMINAL = new Set(['SUCCESS', 'FAILED', 'CANCELLED']);
 
-    function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+    function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
     /* ── Step 2: device sizing guard ──────────────────────────── */
     const screen = document.getElementById('screen');
@@ -474,7 +476,16 @@ export function renderLivePage(runId: string): string {
     }
 
     /* ── Step 4: timeline render ──────────────────────────────── */
-    const STATUS_GLYPH = { finished: '\\u2713', failed: '\\u2717', running: '\\u25CF', pending: '\\u25CB' };
+    // Shared step-markup builders, injected verbatim from src/mcp/live/timelineMarkup.ts
+    // so the live page and the evidence renderer use the exact same code. Free-variable split:
+    //   - GLYPH and dataHTML are injected here (const + .toString() below).
+    //   - esc and escAttr are NOT injected — the injected bodies resolve them to this script's
+    //     own esc()/escAttr() defs, which are kept behaviorally identical to the module's copies.
+    // Do not add a builder free variable without injecting it here or defining it identically below.
+    const GLYPH = ${JSON.stringify(GLYPH)};
+    ${dataHTML.toString()}
+    ${stepCollapsedHTML.toString()}
+    ${stepExpandedHTML.toString()}
     function currentIndex(steps) {
       const r = steps.find(s => s.status === 'running');
       return r ? r.index : (steps.filter(s => s.status !== 'pending').slice(-1)[0]?.index);
@@ -489,7 +500,12 @@ export function renderLivePage(runId: string): string {
         updateProgress(steps);
         return;
       }
-      root.innerHTML = steps.map(s => s.index === sel ? expandedHTML(s) : collapsedHTML(s)).join('');
+      // Bake the live screenshot URLs (host rewrite + cache-bust) onto each step BEFORE
+      // handing it to the shared builders, which emit step.screenshots verbatim.
+      root.innerHTML = steps.map(s => {
+        const live = { ...s, screenshots: (s.screenshots || []).map(rel => runUrl + '/report/' + encodeURI(rel) + '?_rev=' + lastRev) };
+        return live.index === sel ? stepExpandedHTML(live) : stepCollapsedHTML(live);
+      }).join('');
       root.querySelectorAll('[data-step]').forEach(el =>
         el.addEventListener('click', (e) => {
           if (e.target.closest && e.target.closest('.strip')) return;  // let users click screenshots without collapsing the card
@@ -511,31 +527,6 @@ export function renderLivePage(runId: string): string {
         + '<div class="skel-line" style="width:' + widths[i % widths.length] + '%"></div>'
         + '</div></div>'
       ).join('');
-    }
-    function collapsedHTML(s) {
-      return '<div class="step ' + s.status + '" data-step="' + s.index + '"><span class="g ' + s.status + '">' + (STATUS_GLYPH[s.status] || '') + '</span>'
-        + '<span class="t"><b>' + s.index + ' ' + esc(s.title) + '</b> <span class="sub">' + esc(s.summary || '') + '</span></span>'
-        + (s.durationMs ? '<span class="dur">' + (s.durationMs / 1000).toFixed(1) + 's</span>' : '') + '</div>';
-    }
-    function dataHTML(d) {
-      let str;
-      try { str = typeof d === 'string' ? d : JSON.stringify(d); } catch (_) { return ''; }
-      if (str == null || str === '' || str === '{}' || str === '[]' || str === 'null') return '';
-      if (str.length > 400) str = str.slice(0, 400) + '\\u2026';
-      return '<div><span class="lbl">\\u63D0\\u53D6\\u6570\\u636E</span><div class="data">' + esc(str) + '</div></div>';
-    }
-    function expandedHTML(s) {
-      const shots = (s.screenshots || []).map((rel, i) =>
-        '<figure><img loading="lazy" decoding="async" src="' + runUrl + '/report/' + encodeURI(rel) + '?_rev=' + lastRev + '" onerror="this.closest(\\'figure\\').classList.add(\\'broken\\')"><figcaption>' + (i + 1) + '</figcaption></figure>').join('');
-      const action = s.action ? ('\\u52A8\\u4F5C ' + esc(s.action.type) + (s.action.center ? ' (' + s.action.center.join(', ') + ')' : '')) : '';
-      const count = (s.screenshots || []).length;
-      return '<div class="step expanded ' + s.status + '" data-step="' + s.index + '"><div class="head"><b>' + s.index + ' ' + esc(s.title) + '</b></div>'
-        + '<div class="cols"><div class="text">'
-        + (s.thought ? '<div><span class="lbl">\\u601D\\u8003</span> ' + esc(s.thought) + '</div>' : '')
-        + (action ? '<div><span class="lbl">' + action + '</span></div>' : '')
-        + dataHTML(s.extractedData)
-        + (s.error ? '<div class="err"><span class="lbl">\\u539F\\u56E0</span> ' + esc(s.error) + '</div>' : '')
-        + '</div><div class="strip">' + (shots || '<span class="sub">\\u672C\\u6B65\\u65E0\\u622A\\u56FE</span>') + (count ? '<figure style="align-self:center"><figcaption>' + count + ' \\u5F20\\u622A\\u56FE</figcaption></figure>' : '') + '</div></div></div>';
     }
     function updateProgress(steps) {
       const total = steps.length;
