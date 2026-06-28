@@ -1,0 +1,23 @@
+src/mcp/network-mocks/NetworkMockServer.ts
+  beef5d4566d57c9a 42-43,329,331,336-339,346-389,472-473,478-481
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7077318d7323ea44abb638480a6201c2d089ff91",
+  "prompts": {
+    "beef5d4566d57c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d3f85f7-e445-4de8-882f-0dc8f2611a19",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 58,
+      "total_deletions": 80,
+      "accepted_lines": 816,
+      "overriden_lines": 12
+    }
+  }
+}
