@@ -1,0 +1,23 @@
+src/mcp/server.ts
+  beef5d4566d57c9a 227-246,249-262,472-474
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e10363aa162ed259cfb4dcdb423d2db1470e148b",
+  "prompts": {
+    "beef5d4566d57c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d3f85f7-e445-4de8-882f-0dc8f2611a19",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 26,
+      "accepted_lines": 781,
+      "overriden_lines": 0
+    }
+  }
+}
