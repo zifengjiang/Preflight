@@ -43,7 +43,13 @@ export class NetworkMockServer {
   private recorded: { url: string; method: string; requestBody: string; responseBody: string; status: number }[] = [];
   /** Per-rule compiled handler invocation script, keyed by getRuleKey; compiled once at start()/updateRules(). */
   private handlerScripts = new Map<string, vm.Script>();
+  // Two request-body caps with different jobs:
+  //  - REQ_BODY_CAP (10KB): recording tee, used only to derive requestBodyMatch keys — never forwarded.
+  //  - HANDLER_BODY_CAP (4MB): handler path buffers the body to BOTH expose it to the handler AND
+  //    forward it to the real origin (ctx.fetchReal / null-passthrough), so it must hold a real
+  //    request payload. Bodies larger than this are truncated on the handler path.
   private static readonly REQ_BODY_CAP = 10_000;
+  private static readonly HANDLER_BODY_CAP = 4 * 1024 * 1024;
   private static readonly RES_BODY_CAP = 500_000;
 
   start(rules: NetworkMockRule[], bindAddress = "0.0.0.0", preferredPort = 0): Promise<number> {
@@ -331,6 +337,11 @@ export class NetworkMockServer {
       json,
     };
 
+    // The rule is already confirmed matched (findMatchingRule). Count this hit so getStats() reflects
+    // handler-rule traffic (handler rules bypass findMatch, which is where static rules are counted).
+    const ruleKey = getRuleKey(rule);
+    this.callCounts.set(ruleKey, (this.callCounts.get(ruleKey) ?? 0) + 1);
+
     // Memoize the real upstream fetch so it runs at most once across fetchReal + passthrough.
     let realPromise: Promise<{ status: number; headers: Record<string, unknown>; body: string }> | null = null;
     const fetchReal = () => {
@@ -338,7 +349,7 @@ export class NetworkMockServer {
       return realPromise;
     };
 
-    const resp = await runHandler(rule.handler!, req, { fetchReal }, 5000, this.handlerScripts.get(getRuleKey(rule)));
+    const resp = await runHandler(rule.handler!, req, { fetchReal }, 5000, this.handlerScripts.get(ruleKey));
 
     if (resp != null) {
       this.serveHandlerResp(resp, clientRes);
@@ -353,17 +364,19 @@ export class NetworkMockServer {
     }
   }
 
-  /** Read a request body into a capped string (REQ_BODY_CAP). Resolves once the stream ends. */
+  /**
+   * Read a request body into a string for the handler path, capped at HANDLER_BODY_CAP (this buffer
+   * is both handed to the handler AND forwarded to the real origin). Resolves once the stream ends.
+   */
   private readBody(req: IncomingMessage): Promise<string> {
     return new Promise((resolve) => {
       const chunks: Buffer[] = [];
       let captured = 0;
       req.on("data", (chunk: Buffer) => {
-        if (captured < NetworkMockServer.REQ_BODY_CAP) {
-          const take = chunk.subarray(0, NetworkMockServer.REQ_BODY_CAP - captured);
-          chunks.push(take);
-          captured += take.length;
-        }
+        if (captured >= NetworkMockServer.HANDLER_BODY_CAP) return;
+        const take = chunk.subarray(0, NetworkMockServer.HANDLER_BODY_CAP - captured);
+        chunks.push(take);
+        captured += take.length;
       });
       req.on("end", () => resolve(Buffer.concat(chunks).toString()));
       req.on("error", () => resolve(Buffer.concat(chunks).toString()));
@@ -409,7 +422,12 @@ export class NetworkMockServer {
         pres.on("end", () => resolve({ status: pres.statusCode ?? 502, headers: pres.headers, body: Buffer.concat(chunks).toString() }));
         pres.on("error", reject);
       });
-      pr.on("error", reject);
+      // Destroy on error so a failed upstream socket isn't leaked in CLOSE_WAIT.
+      pr.on("error", (err) => { pr.destroy(); reject(err); });
+      // The handler timeout bounds JS only, not the upstream fetch; cap a stuck origin (mirrors
+      // tunnelConnect's 30s) so the client gets a 502 instead of hanging forever. Destroy WITH an
+      // error so the 'error' handler fires and the Promise rejects (a bare destroy() may not).
+      pr.setTimeout(30_000, () => pr.destroy(new Error("upstream timeout")));
       if (body) pr.write(body);
       pr.end();
     });
