@@ -1,0 +1,23 @@
+docs/superpowers/specs/2026-06-28-preflight-network-mock-auto-design.md
+  168bf41e9d1ee6f0 25,113,125-126,138,154,169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "030daa6c7251f721e423ecd8bcc72e31a54be3e6",
+  "prompts": {
+    "168bf41e9d1ee6f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "018cc325-8703-43ed-a74d-443b94ec2bb2",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 4,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
