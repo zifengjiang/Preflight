@@ -25,7 +25,7 @@ function findJsonValue(obj: unknown, key: string): unknown {
   return undefined;
 }
 
-function getRuleKey(rule: NetworkMockRule): string { return (rule.urlPattern ?? rule.urlRegex ?? "") ?? rule.urlRegex ?? ""; }
+function getRuleKey(rule: NetworkMockRule): string { return rule.hostRegex; }
 
 export class NetworkMockServer {
   private server: Server | null = null;
@@ -44,7 +44,7 @@ export class NetworkMockServer {
     this.certCache.clear();
     this.rootCA = this.loadOrGenerateRootCA();
     for (const rule of rules) {
-      this.callCounts.set((rule.urlPattern ?? rule.urlRegex ?? ""), 0);
+      this.callCounts.set(rule.hostRegex, 0);
     }
     this.mitmHttpServer = createServer((req, res) => {
       // hostname/port are stored on the socket during handleConnectEvent
@@ -163,9 +163,9 @@ export class NetworkMockServer {
       port: this.port,
       mitmEnabled: this.rootCA !== null,
       rules: this.rules.map((rule) => ({
-        urlPattern: (rule.urlPattern ?? rule.urlRegex ?? ""),
+        hostRegex: rule.hostRegex,
         description: rule.description,
-        callCount: this.callCounts.get((rule.urlPattern ?? rule.urlRegex ?? "")) ?? 0,
+        callCount: this.callCounts.get(rule.hostRegex) ?? 0,
       })),
     };
   }
@@ -174,7 +174,7 @@ export class NetworkMockServer {
     this.rules = rules;
     this.callCounts.clear();
     for (const rule of rules) {
-      this.callCounts.set((rule.urlPattern ?? rule.urlRegex ?? ""), 0);
+      this.callCounts.set(rule.hostRegex, 0);
     }
   }
 
@@ -189,12 +189,15 @@ export class NetworkMockServer {
   getRecordedCount(): number { return this.recorded.length; }
 
   exportRecordedRules(): NetworkMockRule[] {
-    const dedup = new Map<string, { url: string; method?: string; requestBodies: Map<string, number> }>();
+    const dedup = new Map<string, { url: string; hostname: string; pathname: string; method?: string; requestBodies: Map<string, number> }>();
     for (const r of this.recorded) {
       const key = r.url;
       let entry = dedup.get(key);
       if (!entry) {
-        entry = { url: r.url, method: r.method !== "GET" ? r.method : undefined, requestBodies: new Map() };
+        let hostname = "";
+        let pathname = r.url;
+        try { const u = new URL(r.url); hostname = u.hostname; pathname = u.pathname; } catch {}
+        entry = { url: r.url, hostname, pathname, method: r.method !== "GET" ? r.method : undefined, requestBodies: new Map() };
         dedup.set(key, entry);
       }
       const bodyKey = r.requestBody || "(empty)";
@@ -223,8 +226,11 @@ export class NetworkMockServer {
           }
           return resp;
         });
+      // Escape special regex chars in the recorded hostname for a safe literal match
+      const escapedHost = entry.hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       rules.push({
-        urlPattern: entry.url,
+        hostRegex: escapedHost,
+        ...(entry.pathname && entry.pathname !== "/" ? { pathPattern: entry.pathname } : {}),
         ...(entry.method ? { method: entry.method as NetworkMockRule["method"] } : {}),
         responses: responses.slice(0, 50),
         description: "recorded",
@@ -254,26 +260,34 @@ export class NetworkMockServer {
   }
 
   private findMatch(method: string, url: URL, reqBody?: Record<string, unknown>): NetworkMockResponse | null {
-    const urlStr = url.toString();
     for (const rule of this.rules) {
-      if (rule.urlPattern && !urlStr.includes(rule.urlPattern)) continue;
-      if (rule.urlRegex && !new RegExp(rule.urlRegex).test(urlStr)) continue;
-      if (!rule.urlPattern && !rule.urlRegex) continue;
+      // Host gate: hostRegex must match the request hostname
+      try { if (!new RegExp(rule.hostRegex).test(url.hostname)) continue; } catch { continue; }
+      // Path gate: pathPattern (substring) and/or pathRegex; both omitted = all paths
+      if (rule.pathPattern && !url.pathname.includes(rule.pathPattern)) continue;
+      if (rule.pathRegex) { try { if (!new RegExp(rule.pathRegex).test(url.pathname)) continue; } catch { continue; } }
+      // Method gate
       if (rule.method && rule.method.toUpperCase() !== method.toUpperCase()) continue;
+      // Query params gate
       if (rule.queryParams) {
         let qm = true;
         for (const [k, v] of Object.entries(rule.queryParams)) { if (url.searchParams.get(k) !== v) { qm = false; break; } }
         if (!qm) continue;
       }
-      const currentCount = (this.callCounts.get((rule.urlPattern ?? rule.urlRegex ?? "")) ?? 0) + 1;
-      this.callCounts.set((rule.urlPattern ?? rule.urlRegex ?? ""), currentCount);
+      // Record-only: no responses and no handler → host matched but no mock response
+      if (!rule.responses || rule.responses.length === 0) return null;
+      const key = rule.hostRegex;
+      const currentCount = (this.callCounts.get(key) ?? 0) + 1;
+      this.callCounts.set(key, currentCount);
       for (const resp of rule.responses) {
         if (resp.callIndex != null && resp.callIndex !== currentCount) continue;
         if (resp.requestBodyMatch && reqBody) {
-          for (const [key, expected] of Object.entries(resp.requestBodyMatch)) {
-            const actual = findJsonValue(reqBody, key);
-            if (actual === undefined || String(actual) !== expected) continue;
+          let bodyMatch = true;
+          for (const [rkey, expected] of Object.entries(resp.requestBodyMatch)) {
+            const actual = findJsonValue(reqBody, rkey);
+            if (actual === undefined || String(actual) !== expected) { bodyMatch = false; break; }
           }
+          if (!bodyMatch) continue;
         }
         return resp;
       }
@@ -425,13 +439,7 @@ export class NetworkMockServer {
   }
 
   private hostnameMatchesAnyRule(hostname: string): boolean {
-    // Construct a synthetic full URL so we can reuse the same pattern matching as findMatch.
-    const syntheticUrl = `https://${hostname}/`;
-    return this.rules.some((rule) => {
-      if (rule.urlPattern && syntheticUrl.includes(rule.urlPattern)) return true;
-      if (rule.urlRegex && new RegExp(rule.urlRegex).test(syntheticUrl)) return true;
-      return false;
-    });
+    return this.rules.some((rule) => { try { return new RegExp(rule.hostRegex).test(hostname); } catch { return false; } });
   }
 
   private shouldSkipMitm(hostname: string): boolean {

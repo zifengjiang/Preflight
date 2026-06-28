@@ -66,62 +66,79 @@ function isNonEmptyString(v: unknown): v is string {
 }
 
 function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: true; value: NetworkMockRule } | { ok: false; message: string } {
-  const urlPattern = typeof o.urlPattern === 'string' && o.urlPattern.trim() ? o.urlPattern.trim() : ""
-  const urlRegex = typeof o.urlRegex === 'string' && o.urlRegex.trim() ? o.urlRegex.trim() : ""
-  if (!urlPattern && !urlRegex) return { ok: false, message: `${path}.urlPattern 或 urlRegex 必填其一` }
-  if (urlPattern && urlPattern.length > 1000) return { ok: false, message: `${path}.urlPattern 过长` }
-  if (urlRegex) {
-    try { new RegExp(urlRegex); } catch { return { ok: false, message: `${path}.urlRegex 无效` }; }
+  // hostRegex is required
+  if (!isNonEmptyString(o.hostRegex)) return { ok: false, message: `${path}.hostRegex 必填（用于 TLS CONNECT 主机匹配）` }
+  const hostRegex = o.hostRegex.trim()
+  try { new RegExp(hostRegex); } catch { return { ok: false, message: `${path}.hostRegex 无效正则` }; }
+
+  // optional path gates
+  const pathPattern = typeof o.pathPattern === 'string' && o.pathPattern.trim() ? o.pathPattern.trim() : undefined
+  const pathRegex = typeof o.pathRegex === 'string' && o.pathRegex.trim() ? o.pathRegex.trim() : undefined
+  if (pathRegex) {
+    try { new RegExp(pathRegex); } catch { return { ok: false, message: `${path}.pathRegex 无效正则` }; }
   }
+
   const queryParams: Record<string, string> | undefined =
     o.queryParams != null && typeof o.queryParams === 'object' && !Array.isArray(o.queryParams)
       ? Object.fromEntries(Object.entries(o.queryParams as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
       : undefined
   const method = typeof o.method === 'string' ? o.method.trim().toUpperCase() : ''
   if (method && !['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return { ok: false, message: `${path}.method 须为 GET|POST|PUT|DELETE|PATCH` }
-  if (!Array.isArray(o.responses) || o.responses.length === 0) return { ok: false, message: `${path}.responses 须为非空数组` }
-  if (o.responses.length > 50) return { ok: false, message: `${path}.responses 超过上限 50` }
-  const responses: NetworkMockResponse[] = []
-  for (let j = 0; j < o.responses.length; j++) {
-    const rPath = `${path}.responses[${j}]`
-    const ri = o.responses[j]
-    if (!ri || typeof ri !== 'object' || Array.isArray(ri)) return { ok: false, message: `${rPath} 须为对象` }
-    const r = ri as Record<string, unknown>
-    if (r.body == null) return { ok: false, message: `${rPath}.body 必填` }
-    const body = String(r.body)
-    if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }
-    const status = r.status != null ? Number(r.status) : 200
-    if (!Number.isFinite(status) || status < 100 || status > 599) return { ok: false, message: `${rPath}.status 须为 100～599` }
-    const callIndex = r.callIndex != null ? Number(r.callIndex) : undefined
-    if (callIndex != null && (!Number.isFinite(callIndex) || callIndex < 1)) return { ok: false, message: `${rPath}.callIndex 须为正整数` }
-    const delay = r.delay != null ? Number(r.delay) : undefined
-    if (delay != null && (!Number.isFinite(delay) || delay < 0 || delay > 60_000)) return { ok: false, message: `${rPath}.delay 须为 0～60000` }
-    const headers: Record<string, string> | undefined =
-      r.headers != null && typeof r.headers === 'object' && !Array.isArray(r.headers)
-        ? Object.fromEntries(Object.entries(r.headers as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
-        : undefined
-    const requestBodyMatch: Record<string, string> | undefined =
-      r.requestBodyMatch != null && typeof r.requestBodyMatch === 'object' && !Array.isArray(r.requestBodyMatch)
-        ? Object.fromEntries(Object.entries(r.requestBodyMatch as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
-        : undefined
-    responses.push({
-      status: Math.floor(status),
-      body,
-      ...(callIndex != null ? { callIndex: Math.floor(callIndex) } : {}),
-      ...(delay != null ? { delay: Math.floor(delay) } : {}),
-      ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
-      ...(requestBodyMatch && Object.keys(requestBodyMatch).length > 0 ? { requestBodyMatch } : {}),
-    })
+
+  // handler and responses are XOR; both absent = record-only (allowed)
+  const hasResponses = Array.isArray(o.responses) && o.responses.length > 0
+  const hasHandler = typeof o.handler === 'string' && o.handler.trim().length > 0
+  if (hasResponses && hasHandler) return { ok: false, message: `${path}.responses 与 handler 互斥，只能写一个` }
+
+  let responses: NetworkMockResponse[] | undefined
+  if (hasResponses) {
+    if ((o.responses as unknown[]).length > 50) return { ok: false, message: `${path}.responses 超过上限 50` }
+    responses = []
+    for (let j = 0; j < (o.responses as unknown[]).length; j++) {
+      const rPath = `${path}.responses[${j}]`
+      const ri = (o.responses as unknown[])[j]
+      if (!ri || typeof ri !== 'object' || Array.isArray(ri)) return { ok: false, message: `${rPath} 须为对象` }
+      const r = ri as Record<string, unknown>
+      if (r.body == null) return { ok: false, message: `${rPath}.body 必填` }
+      const body = String(r.body)
+      if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }
+      const statusRaw = r.status != null ? Number(r.status) : undefined
+      if (statusRaw != null && (!Number.isFinite(statusRaw) || statusRaw < 100 || statusRaw > 599)) return { ok: false, message: `${rPath}.status 须为 100～599` }
+      const callIndex = r.callIndex != null ? Number(r.callIndex) : undefined
+      if (callIndex != null && (!Number.isFinite(callIndex) || callIndex < 1)) return { ok: false, message: `${rPath}.callIndex 须为正整数` }
+      const delay = r.delay != null ? Number(r.delay) : undefined
+      if (delay != null && (!Number.isFinite(delay) || delay < 0 || delay > 60_000)) return { ok: false, message: `${rPath}.delay 须为 0～60000` }
+      const headers: Record<string, string> | undefined =
+        r.headers != null && typeof r.headers === 'object' && !Array.isArray(r.headers)
+          ? Object.fromEntries(Object.entries(r.headers as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
+          : undefined
+      const requestBodyMatch: Record<string, string> | undefined =
+        r.requestBodyMatch != null && typeof r.requestBodyMatch === 'object' && !Array.isArray(r.requestBodyMatch)
+          ? Object.fromEntries(Object.entries(r.requestBodyMatch as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
+          : undefined
+      responses.push({
+        ...(statusRaw != null ? { status: Math.floor(statusRaw) } : {}),
+        body,
+        ...(callIndex != null ? { callIndex: Math.floor(callIndex) } : {}),
+        ...(delay != null ? { delay: Math.floor(delay) } : {}),
+        ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+        ...(requestBodyMatch && Object.keys(requestBodyMatch).length > 0 ? { requestBodyMatch } : {}),
+      })
+    }
   }
+
+  const handler = hasHandler ? (o.handler as string).trim() : undefined
   const description = typeof o.description === 'string' && o.description.trim() ? o.description.trim().slice(0, 500) : undefined
   return {
     ok: true,
     value: {
-      ...(urlPattern ? { urlPattern } : {}),
-      ...(urlRegex ? { urlRegex } : {}),
+      hostRegex,
+      ...(pathPattern ? { pathPattern } : {}),
+      ...(pathRegex ? { pathRegex } : {}),
       ...(queryParams && Object.keys(queryParams).length > 0 ? { queryParams } : {}),
       ...(method ? { method: method as NetworkMockRule['method'] } : {}),
-      responses,
+      ...(responses ? { responses } : {}),
+      ...(handler ? { handler } : {}),
       ...(description ? { description } : {}),
     },
   }
@@ -423,8 +440,8 @@ function parseStep(raw: unknown, path: string): { ok: true; step: VisualStep } |
       return { ok: true, step: { type: 'setMock', rule: mockParsed.value } }
     }
     case 'removeMock': {
-      if (!isNonEmptyString(o.urlPattern)) return { ok: false, message: `${path}.urlPattern 必填` }
-      return { ok: true, step: { type: 'removeMock', urlPattern: o.urlPattern.trim() } }
+      if (!isNonEmptyString(o.hostRegex)) return { ok: false, message: `${path}.hostRegex 必填` }
+      return { ok: true, step: { type: 'removeMock', hostRegex: o.hostRegex.trim() } }
     }
     case 'clearMocks': {
       return { ok: true, step: { type: 'clearMocks' } }

@@ -109,8 +109,8 @@ export type VisualStep =
     }
   /** Add or replace a network mock rule during test execution. */
   | { type: 'setMock'; rule: NetworkMockRule }
-  /** Remove a network mock rule by urlPattern match. */
-  | { type: 'removeMock'; urlPattern: string }
+  /** Remove a network mock rule by hostRegex match. */
+  | { type: 'removeMock'; hostRegex: string }
   /** Clear all network mock rules. */
   | { type: 'clearMocks' }
 
@@ -135,20 +135,32 @@ export interface NetworkMockResponse {
   delay?: number
 }
 
+export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+
 export interface NetworkMockRule {
   /**
-   * Substring to match against the full request URL.
-   * The first rule whose urlPattern is a substring of the request URL wins.
+   * REQUIRED — regex on the CONNECT host (SNI); gates MITM/decryption.
+   * Example: "api\\.example\\.com$"
    */
-  urlPattern?: string
-  /** Regex pattern to match against the full request URL. Overrides urlPattern if both set. */
-  urlRegex?: string
+  hostRegex: string
+  /** Substring match on the request path. Both omitted = match all paths on this host. */
+  pathPattern?: string
+  /** Regex match on the request path. Both pathPattern and pathRegex omitted = match all paths. */
+  pathRegex?: string
   /** Key-value pairs that must be present in the request URL query string. */
   queryParams?: Record<string, string>
   /** HTTP method to match (default: matches any method) */
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
-  /** Ordered response variants. The first matching response is returned. */
-  responses: NetworkMockResponse[]
+  method?: HTTPMethod
+  /**
+   * Ordered response variants. The first matching response is returned.
+   * XOR with handler; if neither is present, the rule is record-only (no mock response).
+   */
+  responses?: NetworkMockResponse[]
+  /**
+   * Inline JS source: (req, ctx) => response | null
+   * XOR with responses; execution is Task 5 — field accepted here for type stability.
+   */
+  handler?: string
   /** Human-readable description */
   description?: string
 }
