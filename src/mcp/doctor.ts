@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentHealth } from "./types.js";
-import { isRootableAdbOutput } from "./network-mocks/device-ca.js";
+import { adbRootIndicatesNonRootable } from "./network-mocks/device-ca.js";
 
 const pExecFile = promisify(execFile);
 
@@ -158,15 +158,25 @@ async function androidEmulatorRootableCheck(checks: DoctorCheck[]): Promise<void
     const emulatorSerial = devicesOut
       .split("\n")
       .map((l) => l.trim())
+      // "device" is the adb status token (online); offline/unauthorized
+      // emulators carry a different token and are correctly skipped.
       .find((l) => l.startsWith("emulator-") && l.includes("device"))
       ?.split(/\s+/)[0];
     if (!emulatorSerial) return; // no emulator connected — skip silently
 
+    // Capture stdout+stderr even on non-zero exit: the production-build refusal
+    // is printed by adb and exec rejects, so read the error's stdout/stderr
+    // rather than e.message (which only wraps "Command failed: adb ...").
     const rootOut = await pExecFile("adb", ["-s", emulatorSerial, "root"], { timeout: 10_000 })
-      .then((r) => r.stdout)
-      .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+      .then((r) => `${r.stdout}${r.stderr}`)
+      .catch((e: unknown) => {
+        const err = e as { stdout?: string; stderr?: string };
+        return `${err.stdout ?? ""}${err.stderr ?? ""}`;
+      });
 
-    if (!isRootableAdbOutput(rootOut)) {
+    // Warn ONLY on positive evidence of a non-rootable image. Disconnects,
+    // empty output, and unknown states stay silent (mock is optional).
+    if (adbRootIndicatesNonRootable(rootOut)) {
       checks.push({
         id: "android-emulator-rootable",
         title: "Android Emulator Rootable Image",

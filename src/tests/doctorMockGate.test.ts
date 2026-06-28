@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isRootableAdbOutput } from "../mcp/network-mocks/device-ca.ts";
+import { isRootableAdbOutput, adbRootIndicatesNonRootable } from "../mcp/network-mocks/device-ca.ts";
 
 // Production-build refusal — NOT rootable
 test("isRootableAdbOutput: returns false for production-build refusal", () => {
@@ -31,4 +31,22 @@ test("isRootableAdbOutput: returns false for empty string (unknown)", () => {
 
 test("isRootableAdbOutput: returns false for unrecognized output (unknown)", () => {
   assert.equal(isRootableAdbOutput("error: device unauthorized"), false);
+});
+
+// adbRootIndicatesNonRootable — the doctor warn decision. Warns ONLY on
+// positive evidence of a production/Play image; silent on everything else.
+test("adbRootIndicatesNonRootable: true for production-build refusal (warn)", () => {
+  assert.equal(adbRootIndicatesNonRootable("adbd cannot run as root in production builds"), true);
+});
+
+test("adbRootIndicatesNonRootable: false for rootable output (no warn)", () => {
+  assert.equal(adbRootIndicatesNonRootable("restarting adbd as root"), false);
+});
+
+test("adbRootIndicatesNonRootable: false for transient disconnect (no warn)", () => {
+  assert.equal(adbRootIndicatesNonRootable("error: no devices/emulators found"), false);
+});
+
+test("adbRootIndicatesNonRootable: false for empty output (no warn)", () => {
+  assert.equal(adbRootIndicatesNonRootable(""), false);
 });

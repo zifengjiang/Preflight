@@ -41,6 +41,18 @@ export function isRootableAdbOutput(rootStdout: string): boolean {
   return false;
 }
 
+/**
+ * Decide whether `adb root` output is POSITIVE evidence of a non-rootable
+ * (Play Store / production) image. Returns true ONLY for the production-build
+ * refusal ("cannot run as root"). Stays false for rootable output, empty
+ * output, transient disconnect errors ("no devices/emulators found"), and any
+ * other unrecognised output — so a diagnostic warn fires only on confirmed
+ * evidence, never on a flaky/unknown state.
+ */
+export function adbRootIndicatesNonRootable(output: string): boolean {
+  return output.includes("cannot run as root");
+}
+
 export async function ensureCaInstalled(
   opts: { serial: string; caPemPath: string; mode?: "user" | "system" },
   run: Runner = defaultRunner,
