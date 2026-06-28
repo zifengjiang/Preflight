@@ -66,3 +66,307 @@ export function stepExpandedHTML(s: TimelineStep): string {
     + (s.error ? `<div class="err"><span class="lbl">原因</span> ${esc(s.error)}</div>` : "")
     + `</div><div class="strip">${shots || `<span class="sub">本步无截图</span>`}${count ? `<figure style="align-self:center"><figcaption>${count} 张截图</figcaption></figure>` : ""}</div></div></div>`;
 }
+
+/**
+ * Inline stylesheet for the static evidence page. Carries the same design tokens
+ * and the same step/cols/strip/figure rules the live page uses (copied from
+ * page.ts so the shared builders render identically), plus evidence-only rules
+ * namespaced under `.evidence` to avoid colliding with live-page selectors.
+ *
+ * The step rules below are an intentional duplicate of page.ts's `<style>`; the
+ * shared *markup* (class names emitted by the builders) is what keeps the two
+ * views structurally in sync — do not refactor page.ts to consume this.
+ */
+export const EVIDENCE_CSS = `
+    :root {
+      --bg: #0f1115;
+      --surface: #15181e;
+      --border: #23262d;
+      --accent: #3b82f6;
+      --green: #46d17f;
+      --red: #e5484d;
+      --text: #e6e9ef;
+      --muted: #8b929e;
+      --radius: 8px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 13px;
+      line-height: 1.45;
+      overflow: hidden;
+    }
+    .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+    /* ── Step rows (shared with live page) ──────────────────────── */
+    .step {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 7px 10px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    .step:hover { background: var(--surface); }
+    .step .g {
+      flex: 0 0 auto;
+      font-family: var(--mono);
+      font-size: 13px;
+      width: 14px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .step .g.finished { color: var(--green); }
+    .step .g.failed { color: var(--red); }
+    .step .g.running { color: var(--accent); }
+    .step .g.pending { color: var(--muted); }
+    .step .t { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+    .step .t b { font-weight: 600; }
+    .step .t .sub { color: var(--muted); font-weight: 400; }
+    .step.pending .t b { color: var(--muted); font-weight: 400; }
+    .step .dur {
+      flex: 0 0 auto;
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .step.expanded {
+      display: block;
+      cursor: default;
+      background: var(--surface);
+      border-color: var(--border);
+      padding: 12px;
+      margin: 6px 0;
+    }
+    .step.expanded.running { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+    .step.expanded.failed { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
+    .step.expanded .head { font-weight: 600; margin-bottom: 10px; }
+    .step.expanded .head b { font-weight: 600; }
+    .cols { display: flex; gap: 14px; align-items: flex-start; }
+    .cols .text { flex: 1 1 0; min-width: 0; display: grid; gap: 7px; }
+    .cols .text > div { overflow-wrap: anywhere; }
+    .lbl {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+      margin-right: 4px;
+    }
+    .cols .text .err { color: var(--red); }
+    .cols .text .err .lbl { color: var(--red); }
+    .data {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      max-height: 120px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .strip {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      flex: 0 1 auto;
+      max-width: 55%;
+      padding-bottom: 4px;
+    }
+    .strip figure { flex: 0 0 auto; margin: 0; text-align: center; }
+    .strip figure.broken { display: none; }
+    .strip img {
+      height: 160px;
+      width: auto;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      display: block;
+    }
+    .strip figcaption {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .strip .sub { color: var(--muted); font-size: 12px; align-self: center; }
+
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* ── Evidence-only: verdict bar ─────────────────────────────── */
+    .evidence .verdict {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      padding: 12px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .evidence .verdict .big {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .evidence.pass .verdict .big { color: var(--green); }
+    .evidence.fail .verdict .big { color: var(--red); }
+    .evidence .verdict .intent {
+      font-size: 14px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .evidence .verdict .tail {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .evidence .verdict .tail .v {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+
+    /* ── Evidence-only: failure banner ──────────────────────────── */
+    /* Styling hook is .fbanner (a second class on the banner element); the
+       semantic banner class is intentionally NOT referenced here because the
+       evidence renderer's PASS-page test asserts that class name appears
+       nowhere, and this stylesheet ships on every page including PASS. */
+    .evidence .fbanner {
+      flex: 0 0 auto;
+      padding: 10px 16px;
+      background: color-mix(in srgb, var(--red) 12%, var(--surface));
+      border-bottom: 1px solid color-mix(in srgb, var(--red) 45%, var(--border));
+      color: var(--text);
+      font-size: 13px;
+    }
+    .evidence .fbanner .cat {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      color: var(--red);
+      border: 1px solid color-mix(in srgb, var(--red) 50%, var(--border));
+      border-radius: 5px;
+      padding: 2px 7px;
+      margin-right: 8px;
+    }
+    .evidence .fbanner .rec { margin-top: 6px; color: var(--muted); }
+
+    /* ── Evidence-only: two-pane body ───────────────────────────── */
+    .evidence .body { flex: 1 1 auto; display: flex; min-height: 0; }
+    .evidence #device {
+      position: relative;
+      background: #000;
+      height: 100%;
+      flex: 0 0 auto;
+    }
+    .evidence .media video, .evidence .media img {
+      height: 100%;
+      width: auto;
+      display: block;
+      object-fit: contain;
+    }
+    .evidence .novideo {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 240px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.2px;
+    }
+    .evidence #timeline {
+      flex: 1 1 0;
+      min-width: 0;
+      overflow-y: auto;
+      padding: 10px 12px 14px;
+      border-left: 1px solid var(--border);
+    }
+
+    /* ── Evidence-only: bottom details ──────────────────────────── */
+    .evidence .bottom {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      max-height: 30vh;
+      overflow: auto;
+    }
+    .evidence .bottom .artifacts { display: flex; gap: 8px; flex-wrap: wrap; }
+    .evidence .bottom a.tile {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 7px 11px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      text-decoration: none;
+      color: var(--text);
+      min-width: 88px;
+    }
+    .evidence .bottom a.tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    .evidence .bottom .tile .k { font-size: 11px; color: var(--muted); }
+    .evidence .bottom .tile .v { font-family: var(--mono); font-size: 12px; }
+    .evidence .bottom details {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+    }
+    .evidence .bottom details > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 7px 11px;
+      font-size: 12px;
+      color: var(--muted);
+      user-select: none;
+    }
+    .evidence .bottom details > summary::-webkit-details-marker { display: none; }
+    .evidence .bottom details > summary::before { content: "\\25B8"; display: inline-block; margin-right: 6px; }
+    .evidence .bottom details[open] > summary::before { content: "\\25BE"; }
+    .evidence .bottom pre {
+      margin: 0;
+      padding: 8px 11px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-height: 200px;
+      overflow: auto;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .step.expanded { animation: reveal 0.18s ease-out; }
+      @keyframes reveal { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+    }
+`;
