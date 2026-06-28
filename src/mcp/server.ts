@@ -22,6 +22,29 @@ import { join } from "node:path";
 const MCP_SAFE_WAIT_MS = 45_000;
 const RUN_POLL_INTERVAL_MS = 2_000;
 
+function isValidRegex(s: string): boolean {
+  try { new RegExp(s); return true; } catch { return false; }
+}
+
+/** Shared zod schema for a network-mock rule, with hostRegex/pathRegex compile-checked. */
+const mockRuleSchema = z.object({
+  hostRegex: z.string().refine(isValidRegex, { message: "hostRegex must be a valid RegExp" }),
+  pathPattern: z.string().optional(),
+  pathRegex: z.string().optional().refine((v) => v == null || isValidRegex(v), { message: "pathRegex must be a valid RegExp" }),
+  method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).optional(),
+  queryParams: z.record(z.string()).optional(),
+  responses: z.array(z.object({
+    status: z.number().int().min(100).max(599).optional(),
+    body: z.string(),
+    requestBodyMatch: z.record(z.string()).optional(),
+    callIndex: z.number().int().positive().optional(),
+    headers: z.record(z.string()).optional(),
+    delay: z.number().int().min(0).optional(),
+  })).optional(),
+  handler: z.string().optional(),
+  description: z.string().optional(),
+});
+
 export interface PreflightMcpOptions {
   agentBaseUrl?: string;
   agentToken?: string;
@@ -387,23 +410,10 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         platform: z.enum(["ANDROID", "IOS"]).describe("Device platform"),
         resourceId: z.string().describe("Device resource ID from list_devices (e.g., android:emulator-5554)"),
         port: z.number().int().positive().optional().describe("Preferred port (e.g., to match existing device proxy config)"),
-        rules: z.array(z.object({
-          hostRegex: z.string().describe("Regex matched against the CONNECT host (SNI); gates MITM/decryption. Example: \"api\\\\.example\\\\.com$\""),
-          pathPattern: z.string().optional().describe("Substring match on request path (both path fields omitted = all paths)"),
-          pathRegex: z.string().optional().describe("Regex match on request path"),
-          method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).optional().describe("HTTP method to match (default: any)"),
-          queryParams: z.record(z.string()).optional().describe("Key-value pairs that must be present in the query string"),
-          responses: z.array(z.object({
-            status: z.number().int().min(100).max(599).optional().describe("HTTP status code (default: 200)"),
-            body: z.string().describe("Response body, typically a JSON string"),
-            requestBodyMatch: z.record(z.string()).optional().describe("Key-value pairs that must match in the request body"),
-            callIndex: z.number().int().positive().optional().describe("Only match on the nth call (1-based, for stateful sequences)"),
-            headers: z.record(z.string()).optional().describe("Optional response headers"),
-            delay: z.number().int().min(0).optional().describe("Delay in ms before responding"),
-          })).optional().describe("Static responses (XOR with handler; omit both for record-only)"),
-          handler: z.string().optional().describe("Inline JS: (req, ctx) => response | null (Task 5)"),
-          description: z.string().optional().describe("Human-readable description"),
-        })),
+        rules: z.array(mockRuleSchema).describe(
+          "Mock rules. hostRegex (required) gates MITM/decryption against the CONNECT host (SNI); " +
+          "pathPattern/pathRegex (optional) gate the mock within a decrypted host; responses XOR handler; omit both for record-only.",
+        ),
       },
     },
     async (input) => {
@@ -461,23 +471,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         "Hot-reload mock rules without stopping the server. " +
         "Use to change mock responses mid-test without restarting the proxy.",
       inputSchema: {
-        rules: z.array(z.object({
-          hostRegex: z.string().describe("Regex matched against the CONNECT host (SNI)"),
-          pathPattern: z.string().optional().describe("Substring match on request path"),
-          pathRegex: z.string().optional().describe("Regex match on request path"),
-          method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).optional(),
-          queryParams: z.record(z.string()).optional(),
-          responses: z.array(z.object({
-            status: z.number().int().min(100).max(599).optional(),
-            body: z.string(),
-            requestBodyMatch: z.record(z.string()).optional(),
-            callIndex: z.number().int().positive().optional(),
-            headers: z.record(z.string()).optional(),
-            delay: z.number().int().min(0).optional(),
-          })).optional().describe("Static responses (XOR with handler; omit both for record-only)"),
-          handler: z.string().optional(),
-          description: z.string().optional(),
-        })),
+        rules: z.array(mockRuleSchema),
       },
     },
     async ({ rules }) => {

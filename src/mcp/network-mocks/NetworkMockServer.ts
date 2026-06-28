@@ -25,7 +25,9 @@ function findJsonValue(obj: unknown, key: string): unknown {
   return undefined;
 }
 
-function getRuleKey(rule: NetworkMockRule): string { return rule.hostRegex; }
+function getRuleKey(rule: NetworkMockRule): string {
+  return [rule.hostRegex, rule.pathPattern ?? "", rule.pathRegex ?? "", rule.method ?? ""].join("||");
+}
 
 export class NetworkMockServer {
   private server: Server | null = null;
@@ -44,7 +46,7 @@ export class NetworkMockServer {
     this.certCache.clear();
     this.rootCA = this.loadOrGenerateRootCA();
     for (const rule of rules) {
-      this.callCounts.set(rule.hostRegex, 0);
+      this.callCounts.set(getRuleKey(rule), 0);
     }
     this.mitmHttpServer = createServer((req, res) => {
       // hostname/port are stored on the socket during handleConnectEvent
@@ -165,7 +167,7 @@ export class NetworkMockServer {
       rules: this.rules.map((rule) => ({
         hostRegex: rule.hostRegex,
         description: rule.description,
-        callCount: this.callCounts.get(rule.hostRegex) ?? 0,
+        callCount: this.callCounts.get(getRuleKey(rule)) ?? 0,
       })),
     };
   }
@@ -174,7 +176,7 @@ export class NetworkMockServer {
     this.rules = rules;
     this.callCounts.clear();
     for (const rule of rules) {
-      this.callCounts.set(rule.hostRegex, 0);
+      this.callCounts.set(getRuleKey(rule), 0);
     }
   }
 
@@ -245,6 +247,7 @@ export class NetworkMockServer {
     if (clientReq.method === "CONNECT") return;
     const requestUrl = this.resolveUrl(clientReq);
     if (!requestUrl) { clientRes.writeHead(400); clientRes.end(); return; }
+    // NOTE: reqBody not wired yet → requestBodyMatch is a no-op until Task 4 tees the request body
     const match = this.findMatch(clientReq.method ?? "GET", requestUrl);
     match ? this.serveMock(match, clientRes) : this.forwardRequest(clientReq, clientRes, requestUrl);
   }
@@ -274,9 +277,11 @@ export class NetworkMockServer {
         for (const [k, v] of Object.entries(rule.queryParams)) { if (url.searchParams.get(k) !== v) { qm = false; break; } }
         if (!qm) continue;
       }
-      // Record-only: no responses and no handler → host matched but no mock response
-      if (!rule.responses || rule.responses.length === 0) return null;
-      const key = rule.hostRegex;
+      // Record-only (no responses/handler): host matched but no mock response.
+      // Fall through so a later mock rule on the same host can still match;
+      // do NOT increment callCount for record-only rules.
+      if (!rule.responses || rule.responses.length === 0) continue;
+      const key = getRuleKey(rule);
       const currentCount = (this.callCounts.get(key) ?? 0) + 1;
       this.callCounts.set(key, currentCount);
       for (const resp of rule.responses) {
@@ -367,6 +372,7 @@ export class NetworkMockServer {
     const fullUrl = `https://${hostname}${innerReq.url ?? "/"}`;
     let url: URL;
     try { url = new URL(fullUrl); } catch { innerRes.writeHead(400); innerRes.end(); return; }
+    // NOTE: reqBody not wired yet → requestBodyMatch is a no-op until Task 4 tees the request body
     const match = this.findMatch(innerReq.method ?? "GET", url);
     if (match) {
       if (this.recording) this.recordMatched(url.toString(), innerReq.method ?? "GET", match);
