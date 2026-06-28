@@ -2,12 +2,10 @@ import { NetworkMockServer } from "./NetworkMockServer.js";
 import type { NetworkMockStats } from "./types.js";
 import type { NetworkMockRule } from "../visual-flow/types.js";
 import { configureDeviceProxy, removeDeviceProxy, proxyHostForPlatform } from "./device-proxy.js";
+import { ensureCaInstalled } from "./device-ca.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { execSync } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 export interface NetworkMockServiceStartConfig {
   rules: NetworkMockRule[];
@@ -37,7 +35,13 @@ export class NetworkMockService {
     });
     this.activeConfig = { platform: config.platform, deviceId: config.deviceId };
     if (config.platform === "android") {
-      try { this.tryInstallCaOnAndroid(config.deviceId); } catch { /* non-critical */ }
+      const result = await ensureCaInstalled({
+        serial: config.deviceId,
+        caPemPath: this.server.getRootCaPemPath(),
+      });
+      if (!result.installed) {
+        throw new Error(`CA install failed on device ${config.deviceId}: cert not found at expected path after install`);
+      }
     }
     this.startCertServer(proxyHost, port);
     return this.server.getStats();
@@ -102,32 +106,6 @@ export class NetworkMockService {
 
   private stopCertServer(): void {
     if (this.certServer) { this.certServer.close(); this.certServer = null; this.certServerPort = 0; this.qrPng = null; }
-  }
-
-  /** Push the root CA cert to an Android emulator's user trust store. */
-  private tryInstallCaOnAndroid(deviceId: string): void {
-    const caCert = this.server.getRootCACert();
-    if (!caCert) return;
-
-    // Compute OpenSSL subject hash (Android uses old-style hash for cert filenames)
-    const hash = execSync(`openssl x509 -subject_hash_old -noout`, {
-      input: caCert, stdio: ["pipe", "pipe", "pipe"], timeout: 5000,
-    }).toString().trim();
-    if (!hash) return;
-
-    const pemPath = join(tmpdir(), `preflight-ca-${hash}.pem`);
-    try {
-      writeFileSync(pemPath, caCert);
-      const targetPath = `/data/local/tmp/${hash}.0`;
-      execSync(`adb -s ${deviceId} push "${pemPath}" "${targetPath}"`, {
-        stdio: "pipe", timeout: 10_000,
-      });
-      execSync(
-        `adb -s ${deviceId} shell "mkdir -p /data/misc/user/0/cacerts-added && cp ${targetPath} /data/misc/user/0/cacerts-added/${hash}.0 && chmod 644 /data/misc/user/0/cacerts-added/${hash}.0"`,
-        { stdio: "pipe", timeout: 10_000 },
-      );
-    } catch { /* cert installation is best-effort */ }
-    finally { try { unlinkSync(pemPath); } catch {} }
   }
 
   private generateQrPng(url: string): Buffer | null {

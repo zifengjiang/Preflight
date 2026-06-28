@@ -8,8 +8,8 @@ import tls from "node:tls";
 import { TLSSocket } from "node:tls";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, unlinkSync, readFileSync, mkdirSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
 interface CertKeyPair {
@@ -741,10 +741,18 @@ export class NetworkMockServer {
 
   // ── Certificate generation (openssl CLI) ──
 
+  private getCaDir(): string {
+    return join(process.env.PREFLIGHT_HOME?.trim() || join(homedir(), ".preflight"), "network-mock-ca");
+  }
+
+  getRootCaPemPath(): string {
+    return join(this.getCaDir(), "ca.pem");
+  }
+
   private loadOrGenerateRootCA(): CertKeyPair {
-    const caDir = join(tmpdir(), "preflight-ca");
+    const caDir = this.getCaDir();
     const keyPath = join(caDir, "ca.key");
-    const certPath = join(caDir, "ca.pem");
+    const certPath = this.getRootCaPemPath();
     try {
       const existingKey = readFileSync(keyPath, "utf8");
       const existingCert = readFileSync(certPath, "utf8");
@@ -756,7 +764,7 @@ export class NetworkMockServer {
     } catch { /* generate new */ }
     const ca = this.generateRootCA();
     try {
-      execSync(`mkdir -p "${caDir}"`, { stdio: "pipe" });
+      mkdirSync(caDir, { recursive: true });
       writeFileSync(keyPath, ca.key, { mode: 0o600 });
       writeFileSync(certPath, ca.cert);
     } catch { /* non-fatal */ }
