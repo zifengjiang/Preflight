@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { EvidenceRun } from "./types.js";
-import { buildTimelineFromReportDir, mergeWithVisualFlow } from "./live/dumpTimeline.js";
+import { buildTimelineFromReportDir, mergeWithVisualFlow, type TimelineView, type TimelineStep } from "./live/dumpTimeline.js";
 import { copyRunAssets } from "./live/evidenceAssets.js";
 import { renderEvidenceHTML } from "./live/evidencePage.js";
 
@@ -23,12 +23,23 @@ export async function writeEvidence(input: WriteEvidenceInput): Promise<WriteEvi
   const evidencePath = join(runDir, "evidence.html");
   const metadataPath = join(runDir, "metadata.json");
 
-  const view = input.run.reportDir
-    ? mergeWithVisualFlow(await buildTimelineFromReportDir(input.run.reportDir), input.run.visualFlow)
-    : { revision: 0, steps: [] };
-  const assets = input.run.reportDir
-    ? await copyRunAssets({ reportDir: input.run.reportDir, runDir, steps: view.steps })
-    : { steps: view.steps, recordingRel: undefined };
+  let view: TimelineView;
+  let assets: { steps: TimelineStep[]; recordingRel?: string };
+  if (input.run.reportDir) {
+    try {
+      view = mergeWithVisualFlow(await buildTimelineFromReportDir(input.run.reportDir), input.run.visualFlow);
+    } catch {
+      view = { revision: 0, steps: [] };
+    }
+    try {
+      assets = await copyRunAssets({ reportDir: input.run.reportDir, runDir, steps: view.steps });
+    } catch {
+      assets = { steps: view.steps, recordingRel: undefined };
+    }
+  } else {
+    view = { revision: 0, steps: [] };
+    assets = { steps: [], recordingRel: undefined };
+  }
 
   await writeFile(evidencePath, renderEvidenceHTML({ run: input.run, steps: assets.steps, recordingRel: assets.recordingRel }), "utf8");
   await writeFile(metadataPath, JSON.stringify(input.run, null, 2), "utf8");
