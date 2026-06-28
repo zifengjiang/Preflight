@@ -1,0 +1,25 @@
+src/tests/evidence.test.ts
+  ffaa76e257bd4aa3 1-59
+src/mcp/evidence.ts
+  ffaa76e257bd4aa3 5-7,23,26-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "a3b592cc27e7e516cca8ead07ec17e05fc1eada5",
+  "prompts": {
+    "ffaa76e257bd4aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76328e6-3ec6-43fd-b166-78eb082acf80",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 71,
+      "total_deletions": 48,
+      "accepted_lines": 270,
+      "overriden_lines": 0
+    }
+  }
+}
