@@ -168,3 +168,26 @@ Fixes applied while resurrecting:
 - Certificate-pinning bypass (Frida/objection).
 - WebSocket interception, Quantumult X import.
 - External-file / TypeScript handlers, and a curated handler allowlist or disable switch.
+
+## 15. Resolved: CA install (Task 1 spike)
+
+Spiked 2026-06-28 on the standardized AVD: `sdk_gphone64_arm64-userdebug`, **API 34**, arm64.
+
+**Decision: default to the USER trust store. No `-writable-system` required.**
+
+- `adb root` succeeds (`restarting adbd as root`), confirming the image is rootable — the `-userdebug` (not `-user`) flavor is the gate; a `google_apis_playstore` image would refuse root.
+- Pushing the CA as `<subject_hash_old>.0` to `/data/misc/user/0/cacerts-added/` lands correctly with `chmod 644`, `chown system:system`, and SELinux context `u:object_r:misc_user_data_file:s0` after `restorecon`. The `/data` partition is always writable, so no remount / APEX overlay is needed.
+
+Exact working sequence (what `device-ca.ts` automates in Task 6):
+```bash
+adb -s <serial> root && adb -s <serial> wait-for-device
+HASH=$(openssl x509 -inform PEM -subject_hash_old -noout -in ca.pem)
+adb -s <serial> push ca.pem /data/local/tmp/$HASH.0
+adb -s <serial> shell "mkdir -p /data/misc/user/0/cacerts-added \
+  && cp /data/local/tmp/$HASH.0 /data/misc/user/0/cacerts-added/$HASH.0 \
+  && chmod 644 /data/misc/user/0/cacerts-added/$HASH.0 \
+  && chown system:system /data/misc/user/0/cacerts-added/$HASH.0 \
+  && restorecon /data/misc/user/0/cacerts-added/$HASH.0"
+```
+
+Scope of this spike: confirmed the cert is present in the user store with correct perms/owner/SELinux label (the plan's bar for the spike). End-to-end app-trust through a live MITM is confirmed in Task 8 E2E (no dev-controlled app was handy at spike time); the user has confirmed the target apps trust user CAs (§6). System-store fallback (§6) stays available but is **not** needed for this image.
