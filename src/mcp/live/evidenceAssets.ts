@@ -1,5 +1,5 @@
 import { mkdir, copyFile, readdir, stat } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join, basename, resolve, sep } from "node:path";
 import { existsSync } from "node:fs";
 import type { TimelineStep } from "./dumpTimeline.js";
 
@@ -13,8 +13,12 @@ export async function copyRunAssets(input: CopyAssetsInput): Promise<CopyAssetsR
   for (const step of input.steps) {
     for (const rel of step.screenshots) {
       if (seen.has(rel)) continue;
-      const src = join(input.reportDir, rel);
       const name = basename(rel);
+      // Defense-in-depth: rel is caller-supplied; never read outside reportDir.
+      // Still record the rewrite (unconditional contract) — just skip the copy.
+      const src = resolve(input.reportDir, rel);
+      const root = resolve(input.reportDir);
+      if (src !== root && !src.startsWith(root + sep)) { seen.set(rel, `assets/screenshots/${name}`); continue; }
       if (existsSync(src)) await copyFile(src, join(shotsOut, name)).catch(() => {});
       seen.set(rel, `assets/screenshots/${name}`);
     }
@@ -29,7 +33,6 @@ export async function copyRunAssets(input: CopyAssetsInput): Promise<CopyAssetsR
     if (mp4s.length) {
       const withTime = await Promise.all(mp4s.map(async (f) => ({ f, t: (await stat(join(recDir, f))).mtimeMs })));
       const newest = withTime.sort((a, b) => b.t - a.t)[0]!.f;
-      await mkdir(join(input.runDir, "assets"), { recursive: true });
       await copyFile(join(recDir, newest), join(input.runDir, "assets", "recording.mp4")).catch(() => {});
       if (existsSync(join(input.runDir, "assets", "recording.mp4"))) recordingRel = "assets/recording.mp4";
     }
