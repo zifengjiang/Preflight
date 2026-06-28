@@ -113,3 +113,26 @@ test("writeEvidence renders FAIL verdict + failure banner for a non-SUCCESS run"
   assert.match(html, /failure-banner/);
   await rm(root, { recursive: true, force: true });
 });
+
+test("writeEvidence descends into a per-run report subdir (resolveActiveReportDir)", async () => {
+  // reportDir is the report ROOT; the actual run lives in a per-run subdir. Without
+  // resolveActiveReportDir, buildTimelineFromReportDir reads the empty root -> no assets.
+  const root = await mkdtemp(join(tmpdir(), "ev-sub-"));
+  const reportRoot = join(root, "report");
+  const sub = join(reportRoot, "android-task-xyz");
+  await mkdir(join(sub, "screenshots"), { recursive: true });
+  await writeFile(
+    join(sub, "1.execution.json"),
+    JSON.stringify({ executions: [{ name: "Launch", tasks: [{ type: "Action Space", subType: "Launch", status: "finished", uiContext: { screenshot: { type: "midscene_screenshot_ref", id: "a", mimeType: "image/png" } } }] }] }),
+  );
+  await writeFile(join(sub, "screenshots", "a.png"), "x");
+
+  const out = await writeEvidence({
+    outputRoot: root,
+    run: { runId: "rsub", taskId: "t", status: "SUCCESS", platform: "ANDROID", resourceId: "d", appRef: "com.x", testIntent: "x", createdAt: "2020-01-01T00:00:00Z", updatedAt: "2020-01-01T00:02:00Z", liveUrl: "", artifacts: [], failureAnalysis: { category: "none", summary: "", recommendation: "" }, reportDir: reportRoot },
+  });
+
+  const html = await readFile(out.evidencePath, "utf8");
+  assert.match(html, /assets\/screenshots\/a\.png/); // descended into the subdir and copied the asset
+  await rm(root, { recursive: true, force: true });
+});

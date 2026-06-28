@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { EvidenceRun } from "./types.js";
-import { buildTimelineFromReportDir, mergeWithVisualFlow, type TimelineView, type TimelineStep } from "./live/dumpTimeline.js";
+import { buildTimelineFromReportDir, mergeWithVisualFlow, resolveActiveReportDir, type TimelineView, type TimelineStep } from "./live/dumpTimeline.js";
 import { copyRunAssets } from "./live/evidenceAssets.js";
 import { renderEvidenceHTML } from "./live/evidencePage.js";
 import { buildEvidenceCardPng } from "./live/evidenceCard.js";
@@ -28,13 +28,22 @@ export async function writeEvidence(input: WriteEvidenceInput): Promise<WriteEvi
   let view: TimelineView;
   let assets: { steps: TimelineStep[]; recordingRel?: string };
   if (input.run.reportDir) {
+    // run.reportDir is the report ROOT; this run's execution JSON + screenshots + recording
+    // live in a per-run subdir. Resolve it the same way the live viewer does, else evidence
+    // reads the empty root and produces no steps/assets.
+    let activeDir = input.run.reportDir;
     try {
-      view = mergeWithVisualFlow(await buildTimelineFromReportDir(input.run.reportDir), input.run.visualFlow);
+      activeDir = await resolveActiveReportDir(input.run.reportDir, Date.parse(input.run.createdAt));
+    } catch {
+      // fall back to the configured reportDir
+    }
+    try {
+      view = mergeWithVisualFlow(await buildTimelineFromReportDir(activeDir), input.run.visualFlow);
     } catch {
       view = { revision: 0, steps: [] };
     }
     try {
-      assets = await copyRunAssets({ reportDir: input.run.reportDir, runDir, steps: view.steps });
+      assets = await copyRunAssets({ reportDir: activeDir, runDir, steps: view.steps });
     } catch {
       assets = { steps: view.steps, recordingRel: undefined };
     }

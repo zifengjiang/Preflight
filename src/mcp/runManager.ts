@@ -81,7 +81,9 @@ export class RunManager {
       script: input.script,
       visualFlow: input.visualFlow,
       streamParams: buildStreamParams(input.platform, input.runtimeEnv ?? {}),
-      reportDir: input.runtimeRoot ? resolveRunReportDir({ runtimeRoot: input.runtimeRoot, env: input.runtimeEnv ?? {} }) : undefined,
+      reportDir: input.runtimeRoot
+        ? resolveRunReportDir({ runtimeRoot: input.runtimeRoot, env: { ...input.runtimeEnv, AGENT_HOME: input.runtimeEnv?.AGENT_HOME ?? PREFLIGHT_HOME } })
+        : undefined,
       createdAt: now,
       updatedAt: now,
       liveUrl,
