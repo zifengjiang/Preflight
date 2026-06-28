@@ -1,0 +1,23 @@
+src/tests/evidencePage.test.ts
+  ffaa76e257bd4aa3 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d26615508cd44ec89b908fd870835a737fc4f77f",
+  "prompts": {
+    "ffaa76e257bd4aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76328e6-3ec6-43fd-b166-78eb082acf80",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 7,
+      "accepted_lines": 222,
+      "overriden_lines": 0
+    }
+  }
+}
