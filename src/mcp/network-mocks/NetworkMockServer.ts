@@ -39,6 +39,8 @@ export class NetworkMockServer {
   private mitmHttpServer: Server | null = null;
   private recording = false;
   private recorded: { url: string; method: string; requestBody: string; responseBody: string; status: number }[] = [];
+  private static readonly REQ_BODY_CAP = 10_000;
+  private static readonly RES_BODY_CAP = 500_000;
 
   start(rules: NetworkMockRule[], bindAddress = "0.0.0.0", preferredPort = 0): Promise<number> {
     this.rules = rules;
@@ -324,57 +326,65 @@ export class NetworkMockServer {
     };
     delete opts.headers["proxy-connection"];
 
-    const recording = this.recording && this.recorded.length < 1000;
-    const urlStr = url.toString();
+    const recordUrl = this.recording && this.recorded.length < 1000 ? url.toString() : undefined;
     const method = clientReq.method ?? "GET";
-    const REQ_CAP = 10_000;
-    const RES_CAP = 500_000;
-
-    // Tee request body for recording (captured in parallel with the pipe to origin)
-    const reqChunks: Buffer[] = [];
-    let reqCaptured = 0;
-    if (recording) {
-      clientReq.on("data", (chunk: Buffer) => {
-        if (reqCaptured < REQ_CAP) {
-          const take = chunk.slice(0, REQ_CAP - reqCaptured);
-          reqChunks.push(take);
-          reqCaptured += take.length;
-        }
-      });
-    }
+    const reqChunks = this.teeRequestBody(clientReq, recordUrl);
 
     const pr = httpRequest(opts, (pres) => {
       const status = pres.statusCode ?? 502;
       clientRes.writeHead(status, pres.headers);
-
-      if (recording) {
-        // Tee response body: accumulate chunks into a capped buffer, pipe concurrently to client
-        const resChunks: Buffer[] = [];
-        let resCaptured = 0;
-        pres.on("data", (chunk: Buffer) => {
-          // Always forward to client
-          clientRes.write(chunk);
-          // Accumulate up to cap for recording
-          if (resCaptured < RES_CAP) {
-            const take = chunk.slice(0, RES_CAP - resCaptured);
-            resChunks.push(take);
-            resCaptured += take.length;
-          }
-        });
-        pres.on("end", () => {
-          clientRes.end();
-          const reqBody = Buffer.concat(reqChunks).toString();
-          const responseBody = Buffer.concat(resChunks).toString();
-          this.recorded.push({ url: urlStr, method, requestBody: reqBody, responseBody, status });
-        });
-        pres.on("error", () => { if (!clientRes.headersSent) clientRes.end(); });
-      } else {
-        pres.pipe(clientRes);
-      }
+      // pipe() handles backpressure (drain) and auto-ends clientRes
+      pres.pipe(clientRes);
+      pres.on("error", () => clientRes.end());
+      if (recordUrl) this.recordTee(pres, reqChunks, { url: recordUrl, method, status });
     });
 
     pr.on("error", () => { if (!clientRes.headersSent) { clientRes.writeHead(502); clientRes.end("Bad Gateway"); } });
     clientReq.pipe(pr);
+  }
+
+  /**
+   * Tee request body chunks into a capped buffer (for recording). Returns the chunk array
+   * that recordTee will concat on response end. Returns null when not recording.
+   */
+  private teeRequestBody(clientReq: IncomingMessage, recordUrl?: string): Buffer[] | null {
+    if (!recordUrl) return null;
+    const reqChunks: Buffer[] = [];
+    let captured = 0;
+    clientReq.on("data", (chunk: Buffer) => {
+      if (captured < NetworkMockServer.REQ_BODY_CAP) {
+        const take = chunk.slice(0, NetworkMockServer.REQ_BODY_CAP - captured);
+        reqChunks.push(take);
+        captured += take.length;
+      }
+    });
+    return reqChunks;
+  }
+
+  /**
+   * Observe a piped upstream response (pres is already pipe()'d to the client) to record the full
+   * body. Attaching extra data/end listeners to a piped stream is safe and still sees every chunk;
+   * the cap stops ACCUMULATING but never stops forwarding bytes (pipe owns delivery).
+   */
+  private recordTee(
+    pres: IncomingMessage,
+    reqChunks: Buffer[] | null,
+    meta: { url: string; method: string; status: number },
+  ): void {
+    const resChunks: Buffer[] = [];
+    let captured = 0;
+    pres.on("data", (chunk: Buffer) => {
+      if (captured < NetworkMockServer.RES_BODY_CAP) {
+        const take = chunk.slice(0, NetworkMockServer.RES_BODY_CAP - captured);
+        resChunks.push(take);
+        captured += take.length;
+      }
+    });
+    pres.on("end", () => {
+      const requestBody = reqChunks ? Buffer.concat(reqChunks).toString() : "";
+      const responseBody = Buffer.concat(resChunks).toString();
+      this.recorded.push({ url: meta.url, method: meta.method, requestBody, responseBody, status: meta.status });
+    });
   }
 
   // ── HTTPS MITM handler ──
@@ -459,48 +469,16 @@ export class NetworkMockServer {
     delete opts.headers["proxy-authorization"];
 
     const method = clientReq.method ?? "GET";
-    const recording = !!recordUrl && this.recorded.length < 1000;
-    const REQ_CAP = 10_000;
-    const RES_CAP = 500_000;
-
-    // Tee request body for recording
-    const reqChunks: Buffer[] = [];
-    let reqCaptured = 0;
-    if (recording) {
-      clientReq.on("data", (chunk: Buffer) => {
-        if (reqCaptured < REQ_CAP) {
-          const take = chunk.slice(0, REQ_CAP - reqCaptured);
-          reqChunks.push(take);
-          reqCaptured += take.length;
-        }
-      });
-    }
+    const record = !!recordUrl && this.recorded.length < 1000 ? recordUrl : undefined;
+    const reqChunks = this.teeRequestBody(clientReq, record);
 
     const pr = httpsRequest(opts, (pres) => {
       const status = pres.statusCode ?? 502;
       clientRes.writeHead(status, pres.headers);
-
-      if (recording) {
-        const resChunks: Buffer[] = [];
-        let resCaptured = 0;
-        pres.on("data", (chunk: Buffer) => {
-          clientRes.write(chunk);
-          if (resCaptured < RES_CAP) {
-            const take = chunk.slice(0, RES_CAP - resCaptured);
-            resChunks.push(take);
-            resCaptured += take.length;
-          }
-        });
-        pres.on("end", () => {
-          clientRes.end();
-          const reqBody = Buffer.concat(reqChunks).toString();
-          const responseBody = Buffer.concat(resChunks).toString();
-          this.recorded.push({ url: recordUrl!, method, requestBody: reqBody, responseBody, status });
-        });
-        pres.on("error", () => { if (!clientRes.headersSent) clientRes.end(); });
-      } else {
-        pres.pipe(clientRes);
-      }
+      // pipe() handles backpressure (drain) and auto-ends clientRes
+      pres.pipe(clientRes);
+      pres.on("error", () => clientRes.end());
+      if (record) this.recordTee(pres, reqChunks, { url: record, method, status });
     });
 
     pr.on("error", () => { if (!clientRes.headersSent) { clientRes.writeHead(502); clientRes.end("Bad Gateway"); } });
