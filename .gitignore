@@ -5,3 +5,5 @@ dist/
 .DS_Store
 package-lock.json
 midscene_run/
+.superpowers/
+.codegraph/
