@@ -33,6 +33,17 @@ test("no recording: left pane falls back to error/last screenshot", () => {
   assert.doesNotMatch(html, /<video/);
   assert.match(html, /<img class="media-shot" src="assets\/screenshots\/err\.png"/); // proves the media pane (not the timeline strip or CSS) renders the fallback image
 });
+test("bottom strip: portable asset tiles (recording + screenshots count) into assets/", () => {
+  const steps = [
+    { index: 1, title: "a", status: "finished" as const, summary: "", screenshots: ["assets/screenshots/a.png"] },
+    { index: 2, title: "b", status: "finished" as const, summary: "", screenshots: ["assets/screenshots/b.png"] },
+  ];
+  const html = renderEvidenceHTML({ run: { ...base }, steps, recordingRel: "assets/recording.mp4" });
+  assert.match(html, /class="tile" href="assets\/recording\.mp4"/);
+  assert.match(html, /href="assets\/screenshots\/"/);
+  assert.match(html, /2 张/);            // distinct screenshot count
+  assert.doesNotMatch(html, /file:\/\//); // still no absolute paths
+});
 test("step free-text with </script> cannot break out of the inlined STEPS script", () => {
   const evil = "</script><img src=x onerror=alert(1)>";
   const html = renderEvidenceHTML({ run: { ...base }, steps: [{ ...steps[0], error: evil, title: evil }] });

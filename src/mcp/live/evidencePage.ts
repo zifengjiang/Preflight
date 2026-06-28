@@ -134,13 +134,18 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
     .join("");
 
   // ── Bottom: artifacts + script/visualFlow details ─────────────
-  const artifactTiles = run.artifacts
-    .map(
-      (a) =>
-        `<a class="tile" href="${escAttr(a.uri)}" target="_blank" rel="noreferrer">`
-        + `<span class="k">${esc(a.type)}</span><span class="v">${esc(a.uri)}</span></a>`,
-    )
-    .join("");
+  // §4.5: portable tiles pointing into the self-contained assets/ folder, not the
+  // remote artifact URIs (which break when the <runId>/ folder is moved). Only the
+  // HTML-report tile is allowed to point at the original/remote report.
+  const tile = (href: string, k: string, v: string) =>
+    `<a class="tile" href="${escAttr(href)}" target="_blank" rel="noreferrer">`
+    + `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></a>`;
+  const shotCount = new Set(steps.flatMap((s) => s.screenshots ?? [])).size;
+  const reportArtifact = run.artifacts.find((a) => /report|html/i.test(a.type));
+  const artifactTiles =
+    (recordingRel ? tile(recordingRel, "录屏", "recording.mp4") : "")
+    + (shotCount > 0 ? tile("assets/screenshots/", "截图", `${shotCount} 张`) : "")
+    + (reportArtifact ? tile(reportArtifact.uri, "report.html", "原始报告") : "");
   let visualFlowStr: string;
   try {
     visualFlowStr = JSON.stringify(run.visualFlow, null, 2) ?? "";
