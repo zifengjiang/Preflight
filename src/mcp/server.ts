@@ -301,6 +301,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
             ...run,
             status: summary.status,
             failureAnalysis: summary.failureAnalysis,
+            reportDir: run.reportDir,
           },
         }),
       );

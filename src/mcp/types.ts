@@ -100,6 +100,8 @@ export interface EvidenceRun {
   testIntent?: string;
   script?: string;
   visualFlow?: unknown;
+  /** Absolute Midscene report dir for this run (from RunState). */
+  reportDir?: string;
   createdAt: string;
   updatedAt: string;
   liveUrl: string;
