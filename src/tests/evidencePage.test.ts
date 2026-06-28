@@ -31,7 +31,7 @@ test("no recording: left pane falls back to error/last screenshot", () => {
   const html = renderEvidenceHTML({ run, steps: [failStep], recordingRel: undefined });
   assert.match(html, /assets\/screenshots\/err\.png/); // shown in media pane
   assert.doesNotMatch(html, /<video/);
-  assert.match(html, /media-shot/); // proves media pane (not just timeline strip) renders the fallback image
+  assert.match(html, /<img class="media-shot" src="assets\/screenshots\/err\.png"/); // proves the media pane (not the timeline strip or CSS) renders the fallback image
 });
 test("step free-text with </script> cannot break out of the inlined STEPS script", () => {
   const evil = "</script><img src=x onerror=alert(1)>";

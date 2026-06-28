@@ -300,12 +300,6 @@ export const EVIDENCE_CSS = `
       font-size: 13px;
       letter-spacing: 0.2px;
     }
-    .evidence .media-shot {
-      height: 100%;
-      width: auto;
-      display: block;
-      object-fit: contain;
-    }
     .evidence .body.no-media #device { display: none; }
     .evidence .body.no-media #timeline { border-left: none; }
     .evidence #timeline {
