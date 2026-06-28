@@ -1,0 +1,23 @@
+docs/superpowers/plans/2026-06-27-preflight-evidence-page-redesign.md
+  168bf41e9d1ee6f0 759-827,830-831
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "634a9e3a8125d0b0852a458b02d545b25390eb33",
+  "prompts": {
+    "168bf41e9d1ee6f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "018cc325-8703-43ed-a74d-443b94ec2bb2",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 71,
+      "total_deletions": 2,
+      "accepted_lines": 71,
+      "overriden_lines": 0
+    }
+  }
+}
