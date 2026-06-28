@@ -247,7 +247,8 @@ export class NetworkMockServer {
     if (clientReq.method === "CONNECT") return;
     const requestUrl = this.resolveUrl(clientReq);
     if (!requestUrl) { clientRes.writeHead(400); clientRes.end(); return; }
-    // NOTE: reqBody not wired yet → requestBodyMatch is a no-op until Task 4 tees the request body
+    // NOTE: requestBodyMatch matching remains a known limitation — the request body is not buffered
+    // before findMatch (it is teed during forward, which is too late for matching).
     const match = this.findMatch(clientReq.method ?? "GET", requestUrl);
     match ? this.serveMock(match, clientRes) : this.forwardRequest(clientReq, clientRes, requestUrl);
   }
@@ -322,7 +323,56 @@ export class NetworkMockServer {
       headers: { ...clientReq.headers },
     };
     delete opts.headers["proxy-connection"];
-    const pr = httpRequest(opts, (pres) => { clientRes.writeHead(pres.statusCode ?? 502, pres.headers); pres.pipe(clientRes); });
+
+    const recording = this.recording && this.recorded.length < 1000;
+    const urlStr = url.toString();
+    const method = clientReq.method ?? "GET";
+    const REQ_CAP = 10_000;
+    const RES_CAP = 500_000;
+
+    // Tee request body for recording (captured in parallel with the pipe to origin)
+    const reqChunks: Buffer[] = [];
+    let reqCaptured = 0;
+    if (recording) {
+      clientReq.on("data", (chunk: Buffer) => {
+        if (reqCaptured < REQ_CAP) {
+          const take = chunk.slice(0, REQ_CAP - reqCaptured);
+          reqChunks.push(take);
+          reqCaptured += take.length;
+        }
+      });
+    }
+
+    const pr = httpRequest(opts, (pres) => {
+      const status = pres.statusCode ?? 502;
+      clientRes.writeHead(status, pres.headers);
+
+      if (recording) {
+        // Tee response body: accumulate chunks into a capped buffer, pipe concurrently to client
+        const resChunks: Buffer[] = [];
+        let resCaptured = 0;
+        pres.on("data", (chunk: Buffer) => {
+          // Always forward to client
+          clientRes.write(chunk);
+          // Accumulate up to cap for recording
+          if (resCaptured < RES_CAP) {
+            const take = chunk.slice(0, RES_CAP - resCaptured);
+            resChunks.push(take);
+            resCaptured += take.length;
+          }
+        });
+        pres.on("end", () => {
+          clientRes.end();
+          const reqBody = Buffer.concat(reqChunks).toString();
+          const responseBody = Buffer.concat(resChunks).toString();
+          this.recorded.push({ url: urlStr, method, requestBody: reqBody, responseBody, status });
+        });
+        pres.on("error", () => { if (!clientRes.headersSent) clientRes.end(); });
+      } else {
+        pres.pipe(clientRes);
+      }
+    });
+
     pr.on("error", () => { if (!clientRes.headersSent) { clientRes.writeHead(502); clientRes.end("Bad Gateway"); } });
     clientReq.pipe(pr);
   }
@@ -372,14 +422,14 @@ export class NetworkMockServer {
     const fullUrl = `https://${hostname}${innerReq.url ?? "/"}`;
     let url: URL;
     try { url = new URL(fullUrl); } catch { innerRes.writeHead(400); innerRes.end(); return; }
-    // NOTE: reqBody not wired yet → requestBodyMatch is a no-op until Task 4 tees the request body
+    // NOTE: requestBodyMatch matching remains a known limitation — the request body is not buffered
+    // before findMatch (it is teed during forward, which is too late for matching).
     const match = this.findMatch(innerReq.method ?? "GET", url);
     if (match) {
       if (this.recording) this.recordMatched(url.toString(), innerReq.method ?? "GET", match);
       this.serveMock(match, innerRes);
     } else {
-      if (this.recording) this.recordForwarded(url.toString(), innerReq.method ?? "GET", innerReq, innerRes);
-      this.forwardHttpsRequest(innerReq, innerRes, hostname, port);
+      this.forwardHttpsRequest(innerReq, innerRes, hostname, port, this.recording ? url.toString() : undefined);
     }
   }
 
@@ -394,35 +444,65 @@ export class NetworkMockServer {
     });
   }
 
-  private recordForwarded(urlStr: string, method: string, req: IncomingMessage, res: ServerResponse): void {
-    if (this.recorded.length >= 1000) return;
-    let reqBody = "";
-    req.on("data", (chunk: Buffer) => { reqBody += chunk.toString(); });
-    const origWriteHead = res.writeHead.bind(res);
-    let status = 0;
-    res.writeHead = function (code: number, ...args: any[]) {
-      status = code;
-      return origWriteHead(code, ...args as any);
-    };
-    const self = this;
-    const origEnd = res.end.bind(res);
-    res.end = function (chunk?: any, ...args: any[]) {
-      const respBody = chunk ? (typeof chunk === "string" ? chunk : Buffer.from(chunk).toString()) : "";
-      if (status > 0) {
-        self.recorded.push({ url: urlStr, method, requestBody: reqBody.slice(0, 10000), responseBody: respBody.slice(0, 10000), status });
-      }
-      return origEnd(chunk, ...args as any);
-    };
-  }
-
-  private forwardHttpsRequest(clientReq: IncomingMessage, clientRes: ServerResponse, hostname: string, port: number): void {
+  private forwardHttpsRequest(
+    clientReq: IncomingMessage,
+    clientRes: ServerResponse,
+    hostname: string,
+    port: number,
+    recordUrl?: string,
+  ): void {
     const opts: any = {
       hostname, port, path: clientReq.url, method: clientReq.method,
       headers: { ...clientReq.headers }, rejectUnauthorized: false,
     };
     delete opts.headers["proxy-connection"];
     delete opts.headers["proxy-authorization"];
-    const pr = httpsRequest(opts, (pres) => { clientRes.writeHead(pres.statusCode ?? 502, pres.headers); pres.pipe(clientRes); });
+
+    const method = clientReq.method ?? "GET";
+    const recording = !!recordUrl && this.recorded.length < 1000;
+    const REQ_CAP = 10_000;
+    const RES_CAP = 500_000;
+
+    // Tee request body for recording
+    const reqChunks: Buffer[] = [];
+    let reqCaptured = 0;
+    if (recording) {
+      clientReq.on("data", (chunk: Buffer) => {
+        if (reqCaptured < REQ_CAP) {
+          const take = chunk.slice(0, REQ_CAP - reqCaptured);
+          reqChunks.push(take);
+          reqCaptured += take.length;
+        }
+      });
+    }
+
+    const pr = httpsRequest(opts, (pres) => {
+      const status = pres.statusCode ?? 502;
+      clientRes.writeHead(status, pres.headers);
+
+      if (recording) {
+        const resChunks: Buffer[] = [];
+        let resCaptured = 0;
+        pres.on("data", (chunk: Buffer) => {
+          clientRes.write(chunk);
+          if (resCaptured < RES_CAP) {
+            const take = chunk.slice(0, RES_CAP - resCaptured);
+            resChunks.push(take);
+            resCaptured += take.length;
+          }
+        });
+        pres.on("end", () => {
+          clientRes.end();
+          const reqBody = Buffer.concat(reqChunks).toString();
+          const responseBody = Buffer.concat(resChunks).toString();
+          this.recorded.push({ url: recordUrl!, method, requestBody: reqBody, responseBody, status });
+        });
+        pres.on("error", () => { if (!clientRes.headersSent) clientRes.end(); });
+      } else {
+        pres.pipe(clientRes);
+      }
+    });
+
     pr.on("error", () => { if (!clientRes.headersSent) { clientRes.writeHead(502); clientRes.end("Bad Gateway"); } });
     clientReq.pipe(pr);
   }
