@@ -25,6 +25,14 @@ test("FAIL renders red verdict + failure banner with category/recommendation", (
   assert.match(html, /test-or-app-behavior/);
   assert.match(html, /增加 sleep/);
 });
+test("no recording: left pane falls back to error/last screenshot", () => {
+  const run = { ...base, status: "FAILED", failureAnalysis: { category: "x", summary: "y", recommendation: "z" } };
+  const failStep = { index: 2, title: "assert", status: "failed" as const, summary: "", screenshots: ["assets/screenshots/err.png"], error: "e" };
+  const html = renderEvidenceHTML({ run, steps: [failStep], recordingRel: undefined });
+  assert.match(html, /assets\/screenshots\/err\.png/); // shown in media pane
+  assert.doesNotMatch(html, /<video/);
+  assert.match(html, /media-shot/); // proves media pane (not just timeline strip) renders the fallback image
+});
 test("step free-text with </script> cannot break out of the inlined STEPS script", () => {
   const evil = "</script><img src=x onerror=alert(1)>";
   const html = renderEvidenceHTML({ run: { ...base }, steps: [{ ...steps[0], error: evil, title: evil }] });

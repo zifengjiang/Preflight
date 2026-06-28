@@ -109,9 +109,24 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
       + `<div class="rec"><span class="lbl">建议</span> ${esc(fa.recommendation)}</div></div>`;
 
   // ── Left media pane ───────────────────────────────────────────
+  // Fallback priority: (a) failed step's last screenshot, (b) last step's last
+  // screenshot (scanning from end), (c) 无画面 placeholder.
+  const fallbackShot = (() => {
+    const failedStep = steps.find((s) => s.status === "failed" && (s.screenshots ?? []).length > 0);
+    if (failedStep) return failedStep.screenshots[failedStep.screenshots.length - 1];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const shots = steps[i].screenshots ?? [];
+      if (shots.length > 0) return shots[shots.length - 1];
+    }
+    return undefined;
+  })();
+
+  const hasMedia = recordingRel || fallbackShot;
   const media = recordingRel
     ? `<video id="recording" src="${escAttr(recordingRel)}" controls playsinline preload="metadata"></video>`
-    : `<div class="novideo">无录屏</div>`;
+    : fallbackShot
+      ? `<img class="media-shot" src="${escAttr(fallbackShot)}" alt="screenshot" onerror="this.style.display='none'">`
+      : `<div class="novideo">无画面</div>`;
 
   // ── Right timeline (server-rendered: decisive step expanded) ──
   const timeline = steps
@@ -151,7 +166,7 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
 <body class="evidence ${pass ? "pass" : "fail"}">
   ${verdictBar}
   ${banner}
-  <div class="body">
+  <div class="body${hasMedia ? "" : " no-media"}">
     <div id="device" class="media">${media}</div>
     <div id="timeline">${timeline}</div>
   </div>
@@ -182,15 +197,22 @@ export function renderEvidenceHTML(input: RenderEvidenceInput): string {
       renderTimeline(sel);
     });
 
-    // ── Video aspect-fit sizing (mirrors the live page's syncDeviceWidth) ──
+    // ── Aspect-fit sizing (mirrors the live page's syncDeviceWidth) ──
     const video = document.getElementById('recording');
+    const img = document.querySelector('.media-shot');
     const device = document.getElementById('device');
     function syncDeviceWidth() {
-      if (!video || !video.videoWidth || !video.videoHeight) return;
-      device.style.width = (device.clientHeight * video.videoWidth / video.videoHeight) + 'px';
+      if (video && video.videoWidth && video.videoHeight) {
+        device.style.width = (device.clientHeight * video.videoWidth / video.videoHeight) + 'px';
+      } else if (img && img.naturalWidth && img.naturalHeight) {
+        device.style.width = (device.clientHeight * img.naturalWidth / img.naturalHeight) + 'px';
+      }
     }
     if (video) {
       video.addEventListener('loadedmetadata', syncDeviceWidth);
+      window.addEventListener('resize', syncDeviceWidth);
+    } else if (img) {
+      img.addEventListener('load', syncDeviceWidth);
       window.addEventListener('resize', syncDeviceWidth);
     }
   </script>
