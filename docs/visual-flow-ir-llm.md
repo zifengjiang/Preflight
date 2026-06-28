@@ -49,7 +49,6 @@
 | **变量** | `setVar` / `assignVar` / `transformVar` | 从屏幕读取数据、赋值或转换变量 |
 | **流程控制** | `if` / `ifDeviceType` / `whileLoop` / `forLoop` | 条件判断、按设备类型分支、循环 |
 | **脚本调用** | `callScript` | 调用其他测试用例 |
-| **网络 Mock** | `setMock` / `removeMock` / `clearMocks` | 运行时修改 HTTPS 拦截规则 |
 
 ### 每条步骤的公共规则
 
@@ -93,9 +92,6 @@
 | `assignVar`                                                      | `name`, `value`                                 | —                                                         | 字面值或带 `{{}}` 的模板；**不用**于从屏读数（读屏用 `setVar`）。                                                                                                            |
 | `transformVar`                                                   | `name`, `rule`                                  | `source`、`start`、`end`、`jsonPath`、`pattern`、`replacement` | `rule`：`onlyNumber`、`cut`、`jsonPath`、`replace`、`handleAmount`；按规则选用上述选填字段。                                                                             |
 | `callScript`                                                     | `targetTestCaseId`, `scopeId`, `varBindings`    | `**targetName`**                                          | `targetTestCaseId`：24 位 hex；`scopeId`：`sub` + 12 位小写 hex；`varBindings` 可为 `{}`；`targetName` 仅展示用。                                                      |
-| `setMock`                                                        | `rule`（`NetworkMockRule` 对象）                   | —                                                         | 运行时新增或替换一条 mock 规则；`rule.hostRegex` 必填。                                                                                                                  |
-| `removeMock`                                                     | `hostRegex`                                     | —                                                         | 移除与 `hostRegex` 完全匹配的规则。                                                                                                                                  |
-| `clearMocks`                                                     | —                                               | —                                                         | 清除所有 mock 规则。                                                                                                                                               |
 
 
 步骤 `type` 使用上表枚举；生成后先调用 `validate_visual_flow`，按返回信息修正结构。
@@ -122,7 +118,7 @@
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "scriptVars": [
     { "name": "phone", "description": "登录手机号", "defaultValue": "" }
   ],
@@ -191,11 +187,7 @@ TLS CONNECT 握手时只有 **主机名（SNI）** 可见，路径在加密层�
 
 ### `VisualFlowDocument.networkMocks`
 
-根对象的 `networkMocks` 字段（可选数组）在测试启动前批量生效；运行时可用步骤热更新：
-
-- `setMock`：新增或替换规则（`rule.hostRegex` 必填）。
-- `removeMock`：按 `hostRegex` 移除规则。
-- `clearMocks`：清除所有规则。
+根对象的 `networkMocks` 字段（可选数组）在测试启动前批量生效。运行时热更新规则请使用 `update_network_mock_rules` MCP 工具（不是步骤类型）。
 
 ### 示例
 
@@ -217,17 +209,7 @@ TLS CONNECT 握手时只有 **主机名（SNI）** 可见，路径在加密层�
   "steps": [
     { "type": "launch", "packageName": "com.example.app" },
     { "type": "aiAct", "prompt": "进入订单列表页" },
-    { "type": "assert", "prompt": "列表显示「暂无订单」" },
-    {
-      "type": "setMock",
-      "rule": {
-        "hostRegex": "api\\.example\\.com$",
-        "pathRegex": "^/v1/orders",
-        "responses": [{ "status": 200, "body": "{\"orders\":[{\"id\":1}]}" }]
-      }
-    },
-    { "type": "aiAct", "prompt": "刷新订单列表" },
-    { "type": "assert", "prompt": "列表出现一条订单" }
+    { "type": "assert", "prompt": "列表显示「暂无订单」" }
   ]
 }
 ```
@@ -240,7 +222,6 @@ TLS CONNECT 握手时只有 **主机名（SNI）** 可见，路径在加密层�
 - `responses` 与 `handler` 同时存在 → 失败。
 - `responses[].body` 缺失 → 失败。
 - `responses` 为空数组（`[]`）等同于省略，视为 record-only。
-- `removeMock.hostRegex` 缺失 → 失败。
 
 ---
 

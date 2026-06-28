@@ -93,85 +93,6 @@ export class NetworkMockServer {
   getPort(): number { return this.port; }
   getRootCACert(): string | null { return this.rootCA?.cert ?? null; }
 
-  /** Generate an iOS .mobileconfig profile that installs the CA cert + proxy settings. */
-  generateMobileConfig(proxyHost: string, proxyPort: number): string | null {
-    if (!this.rootCA) return null;
-    const payloadContent = this.rootCA.cert
-      .replace(/-----BEGIN CERTIFICATE-----/, "")
-      .replace(/-----END CERTIFICATE-----/, "")
-      .replace(/\n/g, "");
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>PayloadContent</key>
-  <array>
-    <dict>
-      <key>PayloadCertificateFileName</key>
-      <string>Preflight Mock CA</string>
-      <key>PayloadContent</key>
-      <data>${payloadContent}</data>
-      <key>PayloadDescription</key>
-      <string>信任此证书以启用 Preflight HTTPS 拦截</string>
-      <key>PayloadDisplayName</key>
-      <string>Preflight Mock CA</string>
-      <key>PayloadIdentifier</key>
-      <string>com.preflight.ca</string>
-      <key>PayloadType</key>
-      <string>com.apple.security.root</string>
-      <key>PayloadUUID</key>
-      <string>${randomUUID().toUpperCase()}</string>
-      <key>PayloadVersion</key>
-      <integer>1</integer>
-    </dict>
-    <dict>
-      <key>PayloadContent</key>
-      <dict>
-        <key>HTTPProxy</key>
-        <string>${proxyHost}</string>
-        <key>HTTPPort</key>
-        <integer>${proxyPort}</integer>
-        <key>HTTPSProxy</key>
-        <string>${proxyHost}</string>
-        <key>HTTPSPort</key>
-        <integer>${proxyPort}</integer>
-        <key>ProxyAutoConfigEnable</key>
-        <false/>
-        <key>ProxyAutoDiscoveryEnable</key>
-        <false/>
-      </dict>
-      <key>PayloadDescription</key>
-      <string>配置 WiFi 代理到 Preflight Mock Server</string>
-      <key>PayloadDisplayName</key>
-      <string>WiFi Proxy (Preflight)</string>
-      <key>PayloadIdentifier</key>
-      <string>com.preflight.proxy</string>
-      <key>PayloadType</key>
-      <string>com.apple.SystemConfiguration</string>
-      <key>PayloadUUID</key>
-      <string>${randomUUID().toUpperCase()}</string>
-      <key>PayloadVersion</key>
-      <integer>1</integer>
-    </dict>
-  </array>
-  <key>PayloadDescription</key>
-  <string>安装 Preflight Mock CA 证书和 WiFi 代理配置。安装后前往 Settings > General > About > Certificate Trust Settings 开启信任。</string>
-  <key>PayloadDisplayName</key>
-  <string>Preflight Network Mock</string>
-  <key>PayloadIdentifier</key>
-  <string>com.preflight.mocks</string>
-  <key>PayloadOrganization</key>
-  <string>Preflight</string>
-  <key>PayloadType</key>
-  <string>Configuration</string>
-  <key>PayloadUUID</key>
-  <string>${randomUUID().toUpperCase()}</string>
-  <key>PayloadVersion</key>
-  <integer>1</integer>
-</dict>
-</plist>`;
-  }
-
   getStats(): NetworkMockStats {
     return {
       running: this.server !== null,
@@ -598,6 +519,10 @@ export class NetworkMockServer {
     const [hostname, portStr] = (req.url ?? "").split(":");
     const port = Number.parseInt(portStr, 10) || 443;
     if (!hostname) { sock.write("HTTP/1.1 400 Bad Request\r\n\r\n"); sock.destroy(); return; }
+
+    // Reject hostnames that contain shell-unsafe characters before they reach openssl.
+    // A malicious SNI like "evil$(cmd)" could inject into the execSync subj/SAN strings.
+    if (!/^[a-z0-9.\-]+$/i.test(hostname)) { this.tunnelConnect(sock, hostname, port); return; }
 
     // Skip MITM for connectivity-check domains and non-mocked hosts.
     // Only MITM connections whose hostname matches at least one mock rule;

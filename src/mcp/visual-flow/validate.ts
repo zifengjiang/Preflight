@@ -435,21 +435,6 @@ function parseStep(raw: unknown, path: string): { ok: true; step: VisualStep } |
         },
       }
     }
-    case 'setMock': {
-      if (!o.rule || typeof o.rule !== 'object' || Array.isArray(o.rule)) {
-        return { ok: false, message: `${path}.rule 须为 NetworkMockRule 对象` }
-      }
-      const mockParsed = parseSingleMockRule(o.rule as Record<string, unknown>, `${path}.rule`)
-      if (!mockParsed.ok) return mockParsed
-      return { ok: true, step: { type: 'setMock', rule: mockParsed.value } }
-    }
-    case 'removeMock': {
-      if (!isNonEmptyString(o.hostRegex)) return { ok: false, message: `${path}.hostRegex 必填` }
-      return { ok: true, step: { type: 'removeMock', hostRegex: o.hostRegex.trim() } }
-    }
-    case 'clearMocks': {
-      return { ok: true, step: { type: 'clearMocks' } }
-    }
     default:
       return { ok: false, message: `${path}.type 应使用 IR 步骤类型表中的枚举` }
   }

@@ -107,13 +107,6 @@ export type VisualStep =
       /** 经 `scopeId` 归并后的扁平变量名 → 值；保存编排时并入用例 `scriptTemplateVars[scopeId]` */
       varBindings: Record<string, string>
     }
-  /** Add or replace a network mock rule during test execution. */
-  | { type: 'setMock'; rule: NetworkMockRule }
-  /** Remove a network mock rule by hostRegex match. */
-  | { type: 'removeMock'; hostRegex: string }
-  /** Clear all network mock rules. */
-  | { type: 'clearMocks' }
-
 export interface NetworkMockResponse {
   /** HTTP status code (default: 200) */
   status?: number
