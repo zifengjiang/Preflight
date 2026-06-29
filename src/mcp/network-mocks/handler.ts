@@ -23,8 +23,9 @@ export interface HandlerCtx {
 
 /**
  * Compile the handler source to a vm.Script. Throws on syntax error — used by validate.ts to
- * syntax-check a rule's handler at parse time. This only PARSES (never executes), so it is safe
- * to run on the main thread.
+ * syntax-check a rule's handler at parse time. This only PARSES (never executes), so it is safe to
+ * run on the main thread. (This is the ONLY remaining use of node:vm; handler EXECUTION happens in a
+ * real V8 isolate via isolated-vm — see WORKER_SRC.)
  */
 export function compileHandler(source: string): vm.Script {
   return new vm.Script(`(${source})`);
@@ -36,77 +37,80 @@ export function compileHandler(source: string): vm.Script {
  * and an `async` microtask-starvation loop (which a setTimeout-based race on the main thread cannot
  * bound).
  *
- * Sandbox isolation (closes the constructor-chain RCE escape):
- *  - The handler runs in a fresh `vm.createContext({})` in STRICT mode. Strict mode makes a bare
- *    `this` inside a non-method handler `undefined`, killing the `this.constructor.constructor(...)`
- *    vector.
- *  - CRUCIALLY, every object the handler can reach is built INSIDE the context: `req` is JSON-parsed
- *    in-context and `ctx` (now/uuid/fetchReal) is constructed in-context. A plain object created in
- *    the worker's *main* realm (e.g. passed straight into createContext) carries that realm's
- *    prototype chain, whose `.constructor.constructor` is a Function with `process`/`require` on its
- *    global — i.e. a real escape. Building them in-context makes their prototype chain context-local
- *    (no `process`).
- *  - The only host-realm value we must expose is the fetchReal bridge function. We hand it in as a
- *    temporary global, capture it into a context-local closure, then DELETE the global so the handler
- *    can never name it (a directly-reachable host function is itself an escape via its constructor).
- *  - fetchReal's result crosses the bridge as a JSON STRING (a primitive) and is JSON-parsed
- *    in-context, so the object the handler sees is context-local too.
- *
- * The handler's return value is structured-cloned back via postMessage (plain status/headers/body
- * clone fine; a non-cloneable return throws in the worker → caught → null).
+ * Security boundary — a real V8 isolate (isolated-vm), NOT node:vm:
+ *  - node:vm is NOT a security boundary: an arrow/`globalThis` handler can reach the host realm's
+ *    Function via `this.constructor.constructor("return process")()` and read/exec on the host
+ *    (a real RCE). isolated-vm runs the handler in a separate V8 Isolate whose global has ONLY
+ *    ECMAScript intrinsics (Object/JSON/Math/Date/Promise/...) — NO process/require/Buffer/console/
+ *    global, and whose entire constructor chain is isolate-local (its `Function` has no `process`).
+ *  - We inject NO host object or function as a raw value (a raw host fn would itself re-leak the host
+ *    Function via its constructor). Values cross the isolate boundary ONLY via isolated-vm primitives:
+ *      · req  → `new ExternalCopy(req).copyInto()` (a deep copy → plain in-isolate object).
+ *      · fetchReal → `new ivm.Reference(workerFetchReal)`; the in-isolate `ctx.fetchReal()` calls
+ *        `__fetchRealRef.apply(undefined, [], { result: { promise: true, copy: true } })`, which awaits
+ *        the worker-realm promise and deep-copies the resolved {status,headers,body} INTO the isolate.
+ *      · now/uuid are implemented IN-isolate (Date.now / Math.random) — no host call needed.
+ *  - The handler runs via `context.eval("(" + source + ")(__req, __ctx)", { timeout, promise, copy })`:
+ *    `promise:true` awaits an async handler's returned promise; `copy:true` copies the result out as a
+ *    plain JS value; `timeout` bounds synchronous CPU. The main-thread `terminate()` (backstop timer)
+ *    is the HARD bound that also kills a runaway async handler that starves microtasks.
  */
 const WORKER_SRC = `
 const { parentPort, workerData } = require("node:worker_threads");
-const vm = require("node:vm");
+const ivm = require("isolated-vm");
 const { source, reqJson, timeoutMs } = workerData;
 
-// Host-side fetchReal bridge: posts an RPC and resolves with the upstream response as a JSON STRING.
+// Worker-realm fetchReal bridge: posts an RPC to the main thread and resolves with the upstream
+// response OBJECT ({status,headers,body}) or null. isolated-vm copies this object into the isolate.
 let seq = 0; const pending = new Map();
-function hostFetchReal() { const id = ++seq; return new Promise((res) => { pending.set(id, res); parentPort.postMessage({ t: "fetchReal", id }); }); }
-parentPort.on("message", (m) => { if (m && m.t === "fetchRealResult") { const r = pending.get(m.id); if (r) { pending.delete(m.id); r(m.dataJson); } } });
+function workerFetchReal() { const id = ++seq; return new Promise((res) => { pending.set(id, res); parentPort.postMessage({ t: "fetchReal", id }); }); }
+parentPort.on("message", (m) => { if (m && m.t === "fetchRealResult") { const r = pending.get(m.id); if (r) { pending.delete(m.id); r(m.data == null ? null : m.data); } } });
 
-const sandbox = vm.createContext({});
-// Temporarily expose the request payload (JSON string) + the host bridge fn as context globals.
-sandbox.__reqJson = reqJson;
-sandbox.__fetchRealJson = hostFetchReal;
-
-// Step 1 — bootstrap INSIDE the context: build req/ctx context-locally, capture the host fn into a
-// closure, delete the temporary globals, and stash req/ctx on __H for the handler step to read.
-vm.runInContext(
-  '"use strict";' +
-  '(() => {' +
-  '  const _hostFetch = __fetchRealJson;' +
-  '  const req = JSON.parse(__reqJson);' +
-  '  delete globalThis.__reqJson; delete globalThis.__fetchRealJson;' +
-  '  const ctx = {' +
-  '    now: () => Date.now(),' +
-  '    uuid: () => "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; const v = c === "x" ? r : (r & 0x3 | 0x8); return v.toString(16); }),' +
-  '    fetchReal: async () => { const s = await _hostFetch(); return s == null ? null : JSON.parse(s); },' +
-  '  };' +
-  '  globalThis.__H = { req, ctx };' +
-  '})();',
-  sandbox, { timeout: timeoutMs });
+const isolate = new ivm.Isolate({ memoryLimit: 128 });
+const context = isolate.createContextSync();
 
 (async () => {
   try {
-    // Step 2 — run the handler with the vm timeout (fast SYNC bound; main-thread terminate() is the
-    // hard ASYNC backstop). __H.req/__H.ctx are context-local objects.
-    const result = await vm.runInContext('"use strict";(' + source + ')(__H.req, __H.ctx)', sandbox, { timeout: timeoutMs });
+    // Bridge req + the fetchReal Reference into the isolate. req is a deep COPY (plain in-isolate
+    // object); the Reference is the only outward channel and is consumed solely by ctx.fetchReal.
+    const req = JSON.parse(reqJson);
+    context.global.setSync("__req", new ivm.ExternalCopy(req).copyInto());
+    context.global.setSync("__fetchRealRef", new ivm.Reference(workerFetchReal));
+
+    // Bootstrap __ctx IN-isolate: now/uuid are intrinsic-only; fetchReal awaits the worker-realm
+    // promise via the Reference and gets the resolved object copied back in.
+    context.evalSync(
+      "globalThis.__ctx = {" +
+      "  now: () => Date.now()," +
+      "  uuid: () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); })," +
+      "  fetchReal: () => __fetchRealRef.apply(undefined, [], { result: { promise: true, copy: true } })," +
+      "};"
+    );
+
+    // Run the handler: timeout bounds sync CPU; promise:true awaits an async return; copy:true copies
+    // the result out as a plain JS value. main-thread terminate() is the hard async backstop.
+    const result = await context.eval("(" + source + ")(__req, __ctx)", { timeout: timeoutMs, promise: true, copy: true });
     parentPort.postMessage({ t: "result", value: result == null ? null : result });
-  } catch (e) { parentPort.postMessage({ t: "result", value: null }); }
+  } catch (e) {
+    // Any throw (escape attempt, timeout, non-copyable result, isolate OOM) → null → caller falls through.
+    parentPort.postMessage({ t: "result", value: null });
+  } finally {
+    try { isolate.dispose(); } catch {}
+  }
 })();
 `;
 
 /**
- * Run an inline mock handler in a worker_thread + clean, strict vm context.
+ * Run an inline mock handler in a worker_thread + a real V8 isolate (isolated-vm).
  *
  * Security/timeout model:
- *  - The handler executes inside a worker, in an isolated vm context where every reachable object is
- *    built in-context, so `JSON.constructor.constructor("return process")()` and friends reach the
- *    context's own (process-less) Function → return undefined or throw, never host objects.
- *  - `vm.runInContext`'s `timeout` bounds the synchronous portion; the main-thread `terminate()`
- *    (fired by the backstop timer) is the HARD bound that also kills a runaway async handler that
- *    starves microtasks.
+ *  - The handler executes inside a worker, in an isolated-vm Isolate whose global has only ECMAScript
+ *    intrinsics and whose constructor chain is isolate-local — so `this.constructor.constructor(...)`,
+ *    `globalThis.constructor.constructor(...)`, dynamic `import`, `Function("return process")()` etc.
+ *    reach the isolate's own (process-less) realm → undefined/throw, NEVER the host (no RCE).
+ *  - isolated-vm's `timeout` bounds the synchronous portion; the main-thread `terminate()` (fired by
+ *    the backstop timer) is the HARD bound that also kills a runaway async handler that starves
+ *    microtasks. The isolate is also disposed in the worker's finally.
  *
  * On timeout, throw, or any error we return `null` so the caller falls through to the real response.
  *
@@ -119,7 +123,8 @@ export async function runHandler(
   ctx: HandlerCtx,
   timeoutMs = 5000,
 ): Promise<HandlerResp | null> {
-  // Serialize req to a JSON string so it is rebuilt context-locally in the worker (see WORKER_SRC).
+  // Serialize req to a JSON string so it crosses to the worker, where it is parsed + ExternalCopy'd
+  // into the isolate as a plain object.
   let reqJson: string;
   try { reqJson = JSON.stringify(req); } catch { return null; }
 
@@ -135,15 +140,16 @@ export async function runHandler(
       void worker.terminate();
       resolve(v);
     };
-    // Hard-kill backstop: covers async microtask starvation that the vm `timeout` cannot bound.
+    // Hard-kill backstop: covers async microtask starvation that the isolate `timeout` cannot bound.
     const timer = setTimeout(() => finish(null), timeoutMs + 500);
 
     worker.on("message", async (m: { t: string; id?: number; value?: unknown }) => {
       if (m.t === "fetchReal") {
-        // Run the real upstream fetch on the main thread; send the result back as a JSON string.
-        let dataJson: string | null = null;
-        try { dataJson = JSON.stringify(await ctx.fetchReal()); } catch { /* upstream failed → handler sees null */ }
-        if (!settled) worker.postMessage({ t: "fetchRealResult", id: m.id, dataJson });
+        // Run the real upstream fetch on the main thread; send the result object back (structured
+        // clone via postMessage). The worker resolves the Reference promise with it.
+        let data: unknown = null;
+        try { data = await ctx.fetchReal(); } catch { /* upstream failed → handler sees null */ }
+        if (!settled) worker.postMessage({ t: "fetchRealResult", id: m.id, data });
       } else if (m.t === "result") {
         finish((m.value ?? null) as HandlerResp | null);
       }

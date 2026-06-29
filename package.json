@@ -30,6 +30,7 @@
     "@midscene/harmony": "^1.7.5",
     "@midscene/ios": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.17.5",
+    "isolated-vm": "^6.1.2",
     "koa": "^2.15.4",
     "lodash": "^4.17.21",
     "sharp": "^0.33.5",
