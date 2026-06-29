@@ -118,7 +118,7 @@
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "scriptVars": [
     { "name": "phone", "description": "登录手机号", "defaultValue": "" }
   ],
@@ -147,6 +147,81 @@
   ]
 }
 ```
+
+---
+
+## 6. 网络 Mock（`networkMocks` 与运行时步骤）
+
+### 架构约束
+
+TLS CONNECT 握手时只有 **主机名（SNI）** 可见，路径在加密层内。因此：
+
+- **解密门（decrypt gate）**：`hostRegex` — 正则匹配 CONNECT 主机名，决定是否 MITM 该连接。
+- **Mock 门（mock gate）**：`pathPattern` / `pathRegex` — 在已解密的请求中匹配路径，决定是否返回 mock 响应。
+
+### `NetworkMockRule` 字段
+
+| 字段            | 必填  | 说明                                                              |
+| ------------- | --- | --------------------------------------------------------------- |
+| `hostRegex`   | 是   | 正则，匹配 CONNECT 主机（SNI）。示例：`"api\\.example\\.com$"`             |
+| `pathPattern` | 否   | 子串匹配请求路径。两者均省略 = 该主机所有路径。                                      |
+| `pathRegex`   | 否   | 正则匹配请求路径（与 `pathPattern` 独立，均省略时匹配所有路径）。                        |
+| `method`      | 否   | `GET` / `POST` / `PUT` / `DELETE` / `PATCH`；省略 = 任意方法。         |
+| `queryParams` | 否   | URL query 参数的精确匹配键值对。                                           |
+| `responses`   | 否   | 静态响应数组（XOR with `handler`）；两者均省略 = **仅录制**，不返回 mock。            |
+| `handler`     | 否   | 内联 JS 字符串 `(req, ctx) => response \| null`（Task 5 实现执行，此处仅存字段）。 |
+| `description` | 否   | 人类可读说明。                                                         |
+
+**`responses` 与 `handler` 互斥**：同时写两者校验报错；两者均省略则规则仅参与录制，`hostnameMatchesAnyRule` 仍返回 `true`，`findMatch` 返回 `null`。
+
+### `responses[]` 每项字段
+
+| 字段                | 必填  | 说明                              |
+| ----------------- | --- | ------------------------------- |
+| `body`            | 是   | 响应体字符串（通常为 JSON）。               |
+| `status`          | 否   | HTTP 状态码，100～599；省略默认 200。      |
+| `headers`         | 否   | 附加响应头键值对。                       |
+| `delay`           | 否   | 返回前延迟毫秒数（0～60000）。              |
+| `callIndex`       | 否   | 仅在第 n 次调用时匹配（1-based）；实现有状态序列。  |
+| `requestBodyMatch`| 否   | 请求体 JSON 的键值对精确匹配（省略 = 不限请求体）。 |
+
+### `VisualFlowDocument.networkMocks`
+
+根对象的 `networkMocks` 字段（可选数组）在测试启动前批量生效。运行时热更新规则请使用 `update_network_mock_rules` MCP 工具（不是步骤类型）。
+
+### 示例
+
+```json
+{
+  "networkMocks": [
+    {
+      "hostRegex": "api\\.example\\.com$",
+      "pathRegex": "^/v1/orders",
+      "method": "GET",
+      "responses": [{ "status": 200, "body": "{\"orders\":[]}" }],
+      "description": "空订单列表"
+    },
+    {
+      "hostRegex": "api\\.example\\.com$",
+      "description": "录制该主机所有流量（record-only，无 responses）"
+    }
+  ],
+  "steps": [
+    { "type": "launch", "packageName": "com.example.app" },
+    { "type": "aiAct", "prompt": "进入订单列表页" },
+    { "type": "assert", "prompt": "列表显示「暂无订单」" }
+  ]
+}
+```
+
+### 易错校验
+
+- `hostRegex` 缺失 → 失败。
+- `hostRegex` 不是合法正则 → 失败。
+- `pathRegex` 不是合法正则 → 失败。
+- `responses` 与 `handler` 同时存在 → 失败。
+- `responses[].body` 缺失 → 失败。
+- `responses` 为空数组（`[]`）等同于省略，视为 record-only。
 
 ---
 

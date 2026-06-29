@@ -107,9 +107,65 @@ export type VisualStep =
       /** 经 `scopeId` 归并后的扁平变量名 → 值；保存编排时并入用例 `scriptTemplateVars[scopeId]` */
       varBindings: Record<string, string>
     }
+export interface NetworkMockResponse {
+  /** HTTP status code (default: 200) */
+  status?: number
+  /** Response body, typically a JSON string */
+  body: string
+  /**
+   * Key-value pairs that must be present (with matching values) in the JSON
+   * request body for this response to match. Omit to match any body.
+   */
+  requestBodyMatch?: Record<string, string>
+  /**
+   * Only apply on the nth matching call to this URL pattern (1-based).
+   * Enables stateful sequences: first call returns an error, second succeeds, etc.
+   */
+  callIndex?: number
+  /** Optional response headers */
+  headers?: Record<string, string>
+  /** Delay in ms before responding (simulates network latency) */
+  delay?: number
+}
+
+export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+
+export interface NetworkMockRule {
+  /**
+   * REQUIRED — regex on the CONNECT host (SNI); gates MITM/decryption.
+   * Example: "api\\.example\\.com$"
+   */
+  hostRegex: string
+  /** Substring match on the request path. Both omitted = match all paths on this host. */
+  pathPattern?: string
+  /** Regex match on the request path. Both pathPattern and pathRegex omitted = match all paths. */
+  pathRegex?: string
+  /** Key-value pairs that must be present in the request URL query string. */
+  queryParams?: Record<string, string>
+  /** HTTP method to match (default: matches any method) */
+  method?: HTTPMethod
+  /**
+   * Ordered response variants. The first matching response is returned.
+   * XOR with handler; if neither is present, the rule is record-only (no mock response).
+   */
+  responses?: NetworkMockResponse[]
+  /**
+   * Inline JS source: (req, ctx) => response | null
+   * XOR with responses; execution is Task 5 — field accepted here for type stability.
+   */
+  handler?: string
+  /** Human-readable description */
+  description?: string
+}
 
 export interface VisualFlowDocument {
   version: typeof VISUAL_FLOW_VERSION
   scriptVars?: VisualFlowScriptVar[]
   steps: VisualStep[]
+  /**
+   * Network mock rules applied before the test runs.
+   * Matching HTTP requests are intercepted and return mock responses;
+   * non-matching traffic is forwarded transparently.
+   */
+  networkMocks?: NetworkMockRule[]
 }
