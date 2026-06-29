@@ -1,0 +1,31 @@
+src/mcp/network-mocks/NetworkMockServer.ts
+  beef5d4566d57c9a 721
+src/mcp/server.ts
+  beef5d4566d57c9a 15,26-28,31,33-35,37-39
+src/tests/networkMockHardening.test.ts
+  beef5d4566d57c9a 1-96
+package.json
+  beef5d4566d57c9a 36
+src/mcp/visual-flow/validate.ts
+  beef5d4566d57c9a 3-20,92-93,100-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "bfdfa9353814e4cb8d65d688285b954ced9dd386",
+  "prompts": {
+    "beef5d4566d57c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d3f85f7-e445-4de8-882f-0dc8f2611a19",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 189,
+      "total_deletions": 64,
+      "accepted_lines": 976,
+      "overriden_lines": 0
+    }
+  }
+}
