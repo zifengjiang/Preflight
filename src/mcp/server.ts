@@ -250,7 +250,9 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       let mocksStarted = false;
       if (hasNetworkMocks && input.resourceId) {
         const deviceId = stripPlatformPrefix(input.resourceId);
-        const platform = input.platform.toLowerCase() as "android" | "ios";
+        // start() rejects non-android at runtime (caught below → ok:false); the cast just
+        // satisfies the now-android-only param type for the platform-ios/harmony case.
+        const platform = input.platform.toLowerCase() as "android";
         try {
           await networkMockService.start({
             rules: parsed.value.networkMocks!,
@@ -443,7 +445,8 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     },
     async (input) => {
       await runtime.ensureStarted();
-      const platform = input.platform.toLowerCase() as "android" | "ios";
+      // Tool schema enum is ["ANDROID"], so this is always "android".
+      const platform = input.platform.toLowerCase() as "android";
       const deviceId = stripPlatformPrefix(input.resourceId);
       const rules: NetworkMockRule[] = input.rules.map((r) => ({
         hostRegex: r.hostRegex,

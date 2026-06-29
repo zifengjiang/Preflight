@@ -7,7 +7,8 @@ import { ensureCaInstalled } from "./device-ca.js";
 
 export interface NetworkMockServiceStartConfig {
   rules: NetworkMockRule[];
-  platform: "android" | "ios";
+  /** Android-only in v1; start() still rejects anything else at runtime. */
+  platform: "android";
   deviceId: string;
   preferredPort?: number;
 }
@@ -90,15 +91,19 @@ export class NetworkMockService {
       } catch { /* best-effort */ }
     };
 
-    // SIGINT / SIGTERM: do cleanup then re-raise default behaviour
+    // SIGINT / SIGTERM: run cleanup ONCE, deregister every handler (incl. the
+    // "exit" one — otherwise process exit would fire _exitHandler a second time
+    // and run the adb cleanup twice), then re-raise default behaviour.
     this._sigintHandler = () => {
-      this._exitHandler?.();
-      process.removeListener("SIGINT", this._sigintHandler!);
+      const cleanup = this._exitHandler;
+      this._removeExitFailsafe();
+      cleanup?.();
       process.kill(process.pid, "SIGINT");
     };
     this._sigtermHandler = () => {
-      this._exitHandler?.();
-      process.removeListener("SIGTERM", this._sigtermHandler!);
+      const cleanup = this._exitHandler;
+      this._removeExitFailsafe();
+      cleanup?.();
       process.kill(process.pid, "SIGTERM");
     };
 

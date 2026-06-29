@@ -133,8 +133,9 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
       // requestBodyMatch is unsupported: the request body is not available at findMatch time, so it
       // would silently serve the wrong canned response. Reject loudly; use a handler for body logic.
       if (r.requestBodyMatch != null) return { ok: false, message: `${rPath}.requestBodyMatch is not supported — the request body is not available at match time; use a handler instead` }
-      // Mirror serveMock: JSON-stringify object bodies so callers that pass {a:1} get '{"a":1}' not '[object Object]'
-      const body = (r.body !== null && typeof r.body === "object" && !Array.isArray(r.body))
+      // Mirror serveMock: JSON-stringify object/array bodies so {a:1} → '{"a":1}' (not '[object Object]')
+      // and [1,2,3] → '[1,2,3]' (not '1,2,3'). Arrays are typeof "object", same as serveMock.
+      const body = (r.body !== null && typeof r.body === "object")
         ? JSON.stringify(r.body)
         : String(r.body)
       if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }

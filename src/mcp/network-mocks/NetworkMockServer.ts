@@ -70,8 +70,16 @@ export class NetworkMockServer {
   stop(): Promise<void> {
     this.certCache.clear();
     return new Promise((resolve) => {
-      if (this.mitmHttpServer) { this.mitmHttpServer.close(); this.mitmHttpServer = null; }
+      // server.close() does NOT terminate idle keep-alive connections; a connected
+      // Android client would otherwise keep the close() callback from ever firing,
+      // hanging the failsafe teardown. closeAllConnections() (Node ≥18) forces them shut.
+      if (this.mitmHttpServer) {
+        this.mitmHttpServer.closeAllConnections?.();
+        this.mitmHttpServer.close();
+        this.mitmHttpServer = null;
+      }
       if (!this.server) return resolve();
+      this.server.closeAllConnections?.();
       this.server.close(() => { this.server = null; this.port = 0; resolve(); });
     });
   }

