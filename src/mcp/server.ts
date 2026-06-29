@@ -12,6 +12,7 @@ import { summarizeRun } from "./runSummary.js";
 import { readReport } from "./reportReader.js";
 import { loadPreflightUserConfig } from "./userConfig.js";
 import { compileVisualFlow, validateVisualFlow } from "./visual-flow/index.js";
+import { assertSafeRegexSource } from "./visual-flow/validate.js";
 import { registerExplorationTools } from "./exploration/index.js";
 import { createMidsceneSessionFromResourceId, ensureIosWdaStarted } from "./exploration/tools-session.js";
 import { NetworkMockService } from "./network-mocks/NetworkMockService.js";
@@ -22,15 +23,20 @@ import { join } from "node:path";
 const MCP_SAFE_WAIT_MS = 45_000;
 const RUN_POLL_INTERVAL_MS = 2_000;
 
-function isValidRegex(s: string): boolean {
-  try { new RegExp(s); return true; } catch { return false; }
+function isSafeRegexString(s: string): boolean {
+  const r = assertSafeRegexSource(s);
+  return r.ok;
 }
 
-/** Shared zod schema for a network-mock rule, with hostRegex/pathRegex compile-checked. */
+/** Shared zod schema for a network-mock rule, with hostRegex/pathRegex compile-checked and ReDoS-rejected. */
 const mockRuleSchema = z.object({
-  hostRegex: z.string().refine(isValidRegex, { message: "hostRegex must be a valid RegExp" }),
+  hostRegex: z.string()
+    .refine((s) => { try { new RegExp(s); return true; } catch { return false; } }, { message: "hostRegex must be a valid RegExp" })
+    .refine(isSafeRegexString, { message: "hostRegex is ReDoS-unsafe or exceeds length limit" }),
   pathPattern: z.string().optional(),
-  pathRegex: z.string().optional().refine((v) => v == null || isValidRegex(v), { message: "pathRegex must be a valid RegExp" }),
+  pathRegex: z.string().optional()
+    .refine((v) => v == null || (() => { try { new RegExp(v); return true; } catch { return false; } })(), { message: "pathRegex must be a valid RegExp" })
+    .refine((v) => v == null || isSafeRegexString(v), { message: "pathRegex is ReDoS-unsafe or exceeds length limit" }),
   method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).optional(),
   queryParams: z.record(z.string()).optional(),
   responses: z.array(z.object({

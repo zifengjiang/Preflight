@@ -718,7 +718,7 @@ export class NetworkMockServer {
     const caCertPath = join(dir, `preflight-ca-${id}.pem`);
 
     try {
-      writeFileSync(caKeyPath, this.rootCA!.key);
+      writeFileSync(caKeyPath, this.rootCA!.key, { mode: 0o600 });
       writeFileSync(caCertPath, this.rootCA!.cert);
 
       execSync(`openssl req -newkey rsa:2048 -nodes -keyout "${keyPath}" -out "${csrPath}" -subj "/CN=${hostname}"`, { stdio: "pipe", timeout: 10_000 });

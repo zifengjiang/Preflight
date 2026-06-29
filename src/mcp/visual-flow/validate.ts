@@ -1,5 +1,23 @@
 import { VISUAL_FLOW_VERSION, type VisualFlowDocument, type VisualFlowScriptVar, type VisualStep, type NetworkMockRule, type NetworkMockResponse } from './types.js'
 import { compileHandler } from '../network-mocks/handler.js'
+import { createRequire } from 'node:module'
+
+const _require = createRequire(import.meta.url)
+const safeRegex: (pattern: string | RegExp) => boolean = _require('safe-regex')
+
+const REGEX_MAX_LENGTH = 1000
+
+/** Returns ok:true if the pattern is safe to compile and use, or ok:false with a reason. */
+export function assertSafeRegexSource(pattern: string): { ok: true } | { ok: false; reason: string } {
+  if (pattern.length > REGEX_MAX_LENGTH) {
+    return { ok: false, reason: `pattern too long (${pattern.length} chars, max ${REGEX_MAX_LENGTH})` }
+  }
+  try { new RegExp(pattern) } catch { return { ok: false, reason: 'invalid regular expression' } }
+  if (!safeRegex(pattern)) {
+    return { ok: false, reason: 'ReDoS-unsafe regex (catastrophic backtracking detected)' }
+  }
+  return { ok: true }
+}
 
 const SET_VAR_METHODS = new Set(['aiQuery', 'aiAsk', 'aiBoolean', 'aiNumber', 'aiString'])
 const TRANSFORM_VAR_RULES = new Set(['onlyNumber', 'cut', 'jsonPath', 'replace', 'handleAmount'])
@@ -71,12 +89,16 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
   if (!isNonEmptyString(o.hostRegex)) return { ok: false, message: `${path}.hostRegex 必填（用于 TLS CONNECT 主机匹配）` }
   const hostRegex = o.hostRegex.trim()
   try { new RegExp(hostRegex); } catch { return { ok: false, message: `${path}.hostRegex 无效正则` }; }
+  const hostRegexSafe = assertSafeRegexSource(hostRegex)
+  if (!hostRegexSafe.ok) return { ok: false, message: `${path}.hostRegex 不安全: ${hostRegexSafe.reason}` }
 
   // optional path gates
   const pathPattern = typeof o.pathPattern === 'string' && o.pathPattern.trim() ? o.pathPattern.trim() : undefined
   const pathRegex = typeof o.pathRegex === 'string' && o.pathRegex.trim() ? o.pathRegex.trim() : undefined
   if (pathRegex) {
     try { new RegExp(pathRegex); } catch { return { ok: false, message: `${path}.pathRegex 无效正则` }; }
+    const pathRegexSafe = assertSafeRegexSource(pathRegex)
+    if (!pathRegexSafe.ok) return { ok: false, message: `${path}.pathRegex 不安全: ${pathRegexSafe.reason}` }
   }
 
   const queryParams: Record<string, string> | undefined =
