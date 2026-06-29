@@ -23,6 +23,16 @@ import { join } from "node:path";
 const MCP_SAFE_WAIT_MS = 45_000;
 const RUN_POLL_INTERVAL_MS = 2_000;
 
+/** Strip the leading platform prefix from a resourceId.
+ * android:127.0.0.1:5555 → 127.0.0.1:5555
+ * android:emulator-5554  → emulator-5554
+ * emulator-5554          → emulator-5554 (no prefix — pass-through)
+ * ios:aabb-ccdd          → aabb-ccdd
+ */
+export function stripPlatformPrefix(resourceId: string): string {
+  return resourceId.replace(/^(android|ios|harmony):/i, "");
+}
+
 function isSafeRegexString(s: string): boolean {
   const r = assertSafeRegexSource(s);
   return r.ok;
@@ -239,7 +249,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       const hasNetworkMocks = (parsed.value.networkMocks?.length ?? 0) > 0;
       let mocksStarted = false;
       if (hasNetworkMocks && input.resourceId) {
-        const deviceId = input.resourceId.includes(":") ? input.resourceId.split(":")[1]! : input.resourceId;
+        const deviceId = stripPlatformPrefix(input.resourceId);
         const platform = input.platform.toLowerCase() as "android" | "ios";
         try {
           await networkMockService.start({
@@ -279,6 +289,13 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         });
         if (!input.waitForCompletion) {
           mockOwnershipTransferred = true;
+          if (mocksStarted) {
+            // ITEM 2: tag this run as the owner so watch_run/cancel_run only tear
+            // down when THIS specific run reaches terminal state.
+            networkMockService.setOwnerRunId(started.runId);
+            // ITEM 3: arm a 30-min failsafe TTL for abandoned runs that never poll.
+            networkMockService.armTtl();
+          }
           return jsonResult({
             ...started,
             visualFlow: parsed.value,
@@ -323,8 +340,8 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       const summary = waitForCompletion
         ? await runManager.waitForRun(runId, safeMcpWaitMs(timeoutMs), RUN_POLL_INTERVAL_MS)
         : await runManager.watchRun(runId, MCP_SAFE_WAIT_MS);
-      // Auto-cleanup mocks on terminal state
-      if (["SUCCESS", "FAILED", "CANCELLED"].includes(summary.status) && networkMockService.isRunning()) {
+      // ITEM 2: only tear down mocks if this runId is the owner of the current session
+      if (["SUCCESS", "FAILED", "CANCELLED"].includes(summary.status) && networkMockService.isRunning() && networkMockService.shouldTearDownFor(runId)) {
         try { await networkMockService.stop(); } catch { /* cleanup */ }
       }
       return jsonResult(summary);
@@ -345,8 +362,8 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     async ({ runId, reason }) => {
       await runtime.ensureStarted();
       const result = await runManager.cancelRun(runId, "model", reason ?? "no reason given");
-      // Clean up network mocks if they were auto-started for this run
-      if (networkMockService.isRunning()) {
+      // ITEM 2: only tear down mocks if this runId is the owner of the current session
+      if (networkMockService.isRunning() && networkMockService.shouldTearDownFor(runId)) {
         try { await networkMockService.stop(); } catch { /* cleanup */ }
       }
       return jsonResult(result);
@@ -415,7 +432,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         "Use before a test run to mock API responses that the app depends on. " +
         "Currently supports Android emulator (iOS simulator deferred to phase 2).",
       inputSchema: {
-        platform: z.enum(["ANDROID", "IOS"]).describe("Device platform"),
+        platform: z.enum(["ANDROID"]).describe("Device platform (Android only in v1)"),
         resourceId: z.string().describe("Device resource ID from list_devices (e.g., android:emulator-5554)"),
         port: z.number().int().positive().optional().describe("Preferred port (e.g., to match existing device proxy config)"),
         rules: z.array(mockRuleSchema).describe(
@@ -427,7 +444,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     async (input) => {
       await runtime.ensureStarted();
       const platform = input.platform.toLowerCase() as "android" | "ios";
-      const deviceId = input.resourceId.includes(":") ? input.resourceId.split(":")[1]! : input.resourceId;
+      const deviceId = stripPlatformPrefix(input.resourceId);
       const rules: NetworkMockRule[] = input.rules.map((r) => ({
         hostRegex: r.hostRegex,
         ...(r.pathPattern ? { pathPattern: r.pathPattern } : {}),
