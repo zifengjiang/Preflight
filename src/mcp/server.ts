@@ -42,10 +42,12 @@ const mockRuleSchema = z.object({
   responses: z.array(z.object({
     status: z.number().int().min(100).max(599).optional(),
     body: z.string(),
-    requestBodyMatch: z.record(z.string()).optional(),
     callIndex: z.number().int().positive().optional(),
     headers: z.record(z.string()).optional(),
     delay: z.number().int().min(0).optional(),
+    // requestBodyMatch is unsupported (request body unavailable at match time). Reject loudly
+    // rather than silently strip it, so a stale/recorded rule fails fast instead of misbehaving.
+    requestBodyMatch: z.never({ message: "requestBodyMatch is not supported — use a handler instead" }).optional(),
   })).optional(),
   handler: z.string().optional(),
   description: z.string().optional(),
@@ -435,7 +437,6 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         ...(r.responses ? { responses: r.responses.map((resp) => ({
           ...(resp.status != null ? { status: resp.status } : {}),
           body: resp.body,
-          ...(resp.requestBodyMatch ? { requestBodyMatch: resp.requestBodyMatch } : {}),
           ...(resp.callIndex != null ? { callIndex: resp.callIndex } : {}),
           ...(resp.headers ? { headers: resp.headers } : {}),
           ...(resp.delay != null ? { delay: resp.delay } : {}),
@@ -493,7 +494,6 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         ...(r.responses ? { responses: r.responses.map((resp) => ({
           ...(resp.status != null ? { status: resp.status } : {}),
           body: resp.body,
-          ...(resp.requestBodyMatch ? { requestBodyMatch: resp.requestBodyMatch } : {}),
           ...(resp.callIndex != null ? { callIndex: resp.callIndex } : {}),
           ...(resp.headers ? { headers: resp.headers } : {}),
           ...(resp.delay != null ? { delay: resp.delay } : {}),
@@ -564,8 +564,7 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       title: "Export Recorded Rules",
       description:
         "Export recorded network traffic as NetworkMockRule[]. " +
-        "Duplicated URLs are merged, request bodies generate requestBodyMatch rules, " +
-        "and sequential responses are assigned callIndex. " +
+        "Duplicated URLs are merged and sequential responses are assigned callIndex. " +
         "Use after stop_recording to convert captured traffic into reusable mock rules.",
     },
     async () => {

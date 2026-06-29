@@ -91,6 +91,13 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
   try { new RegExp(hostRegex); } catch { return { ok: false, message: `${path}.hostRegex 无效正则` }; }
   const hostRegexSafe = assertSafeRegexSource(hostRegex)
   if (!hostRegexSafe.ok) return { ok: false, message: `${path}.hostRegex 不安全: ${hostRegexSafe.reason}` }
+  // Reject clearly catch-all host patterns: they MITM unintended hosts. Conservative — only flag a
+  // pattern that matches an unrelated sentinel hostname, or a known catch-all literal. Normal suffix
+  // patterns like `api\.example\.com$` do NOT match the sentinel and pass.
+  const CATCH_ALL_HOST_PATTERNS = new Set(['', '.*', '.+', '.', '^.*$', '^.+$'])
+  if (CATCH_ALL_HOST_PATTERNS.has(hostRegex) || new RegExp(hostRegex).test('nonmatching-sentinel-host.invalid')) {
+    return { ok: false, message: `${path}.hostRegex is too broad (catch-all) — anchor it to a specific host to avoid MITM of unintended hosts (e.g. end with \\$ and escape dots: api\\.example\\.com$)` }
+  }
 
   // optional path gates
   const pathPattern = typeof o.pathPattern === 'string' && o.pathPattern.trim() ? o.pathPattern.trim() : undefined
@@ -123,6 +130,9 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
       if (!ri || typeof ri !== 'object' || Array.isArray(ri)) return { ok: false, message: `${rPath} 须为对象` }
       const r = ri as Record<string, unknown>
       if (r.body == null) return { ok: false, message: `${rPath}.body 必填` }
+      // requestBodyMatch is unsupported: the request body is not available at findMatch time, so it
+      // would silently serve the wrong canned response. Reject loudly; use a handler for body logic.
+      if (r.requestBodyMatch != null) return { ok: false, message: `${rPath}.requestBodyMatch is not supported — the request body is not available at match time; use a handler instead` }
       const body = String(r.body)
       if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }
       const statusRaw = r.status != null ? Number(r.status) : undefined
@@ -135,17 +145,12 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
         r.headers != null && typeof r.headers === 'object' && !Array.isArray(r.headers)
           ? Object.fromEntries(Object.entries(r.headers as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
           : undefined
-      const requestBodyMatch: Record<string, string> | undefined =
-        r.requestBodyMatch != null && typeof r.requestBodyMatch === 'object' && !Array.isArray(r.requestBodyMatch)
-          ? Object.fromEntries(Object.entries(r.requestBodyMatch as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
-          : undefined
       responses.push({
         ...(statusRaw != null ? { status: Math.floor(statusRaw) } : {}),
         body,
         ...(callIndex != null ? { callIndex: Math.floor(callIndex) } : {}),
         ...(delay != null ? { delay: Math.floor(delay) } : {}),
         ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
-        ...(requestBodyMatch && Object.keys(requestBodyMatch).length > 0 ? { requestBodyMatch } : {}),
       })
     }
   }

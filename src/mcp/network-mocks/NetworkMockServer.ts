@@ -16,16 +16,6 @@ interface CertKeyPair {
   cert: string;
 }
 
-function findJsonValue(obj: unknown, key: string): unknown {
-  if (!obj || typeof obj !== "object") return undefined;
-  if (key in (obj as Record<string, unknown>)) return (obj as Record<string, unknown>)[key];
-  for (const v of Object.values(obj as Record<string, unknown>)) {
-    const result = findJsonValue(v, key);
-    if (result !== undefined) return result;
-  }
-  return undefined;
-}
-
 function getRuleKey(rule: NetworkMockRule): string {
   return [rule.hostRegex, rule.pathPattern ?? "", rule.pathRegex ?? "", rule.method ?? ""].join("||");
 }
@@ -41,7 +31,7 @@ export class NetworkMockServer {
   private recording = false;
   private recorded: { url: string; method: string; requestBody: string; responseBody: string; status: number }[] = [];
   // Two request-body caps with different jobs:
-  //  - REQ_BODY_CAP (10KB): recording tee, used only to derive requestBodyMatch keys — never forwarded.
+  //  - REQ_BODY_CAP (10KB): recording tee, captured for the recorded request body — never forwarded.
   //  - HANDLER_BODY_CAP (4MB): handler path buffers the body to BOTH expose it to the handler AND
   //    forward it to the real origin (ctx.fetchReal / null-passthrough), so it must hold a real
   //    request payload. Bodies larger than this are truncated on the handler path.
@@ -145,17 +135,6 @@ export class NetworkMockServer {
             body: r.responseBody.slice(0, 500_000),
           };
           if (i > 0) resp.callIndex = i + 1;
-          if (r.requestBody) {
-            try {
-              const parsed = JSON.parse(r.requestBody);
-              const flat: Record<string, string> = {};
-              for (const [k, v] of Object.entries(parsed)) {
-                if (typeof v === "string") flat[k] = v;
-                else if (typeof v === "number" || typeof v === "boolean") flat[k] = String(v);
-              }
-              if (Object.keys(flat).length > 0) resp.requestBodyMatch = flat;
-            } catch { /* ignore */ }
-          }
           return resp;
         });
       // Escape special regex chars in the recorded hostname for a safe literal match
@@ -183,8 +162,6 @@ export class NetworkMockServer {
       void this.handleViaHandler(rule, clientReq, clientRes, requestUrl, false);
       return;
     }
-    // NOTE: requestBodyMatch matching remains a known limitation — the request body is not buffered
-    // before findMatch (it is teed during forward, which is too late for matching).
     const match = this.findMatch(method, requestUrl);
     match ? this.serveMock(match, clientRes) : this.forwardRequest(clientReq, clientRes, requestUrl);
   }
@@ -382,7 +359,7 @@ export class NetworkMockServer {
     return null;
   }
 
-  private findMatch(method: string, url: URL, reqBody?: Record<string, unknown>): NetworkMockResponse | null {
+  private findMatch(method: string, url: URL): NetworkMockResponse | null {
     for (const rule of this.rules) {
       if (!this.ruleGates(rule, method, url)) continue;
       // Record-only (no responses/handler): host matched but no mock response.
@@ -390,34 +367,53 @@ export class NetworkMockServer {
       // do NOT increment callCount for record-only rules.
       if (!rule.responses || rule.responses.length === 0) continue;
       const key = getRuleKey(rule);
+      // Count every request that matches this rule's gates: callIndex means "the Nth request
+      // matching this rule", so a sparse callIndex (e.g. only callIndex:2) stays reachable.
       const currentCount = (this.callCounts.get(key) ?? 0) + 1;
       this.callCounts.set(key, currentCount);
       for (const resp of rule.responses) {
         if (resp.callIndex != null && resp.callIndex !== currentCount) continue;
-        if (resp.requestBodyMatch && reqBody) {
-          let bodyMatch = true;
-          for (const [rkey, expected] of Object.entries(resp.requestBodyMatch)) {
-            const actual = findJsonValue(reqBody, rkey);
-            if (actual === undefined || String(actual) !== expected) { bodyMatch = false; break; }
-          }
-          if (!bodyMatch) continue;
-        }
         return resp;
       }
-      return null;
+      // Gates matched but no response applied (e.g. all responses have a non-matching callIndex).
+      // Fall through to the next rule instead of returning null, so a LATER rule on the same host
+      // can still serve this request. The count above already advanced for this gate-match.
+      continue;
     }
     return null;
   }
 
   private serveMock(mock: NetworkMockResponse, res: ServerResponse): void {
-    const { status = 200, body, headers = {}, delay = 0 } = mock;
+    const { headers = {}, delay = 0 } = mock;
+    // Clamp status to a valid HTTP code so a bad value can't throw in res.writeHead.
+    const rawStatus = mock.status ?? 200;
+    const status = Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599 ? rawStatus : 200;
+    // Mirror serveHandlerResp: JSON-stringify a non-string object body (and default its content-type)
+    // instead of String()-ing it into "[object Object]".
+    const outHeaders: Record<string, string> = {
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+      "X-Preflight-Mock": "true",
+      ...headers,
+    };
+    const rawBody: unknown = mock.body;
+    let body: string;
+    if (typeof rawBody === "string") {
+      body = rawBody;
+    } else if (rawBody == null) {
+      body = "";
+    } else if (Buffer.isBuffer(rawBody)) {
+      body = rawBody.toString();
+    } else if (typeof rawBody === "object") {
+      body = JSON.stringify(rawBody);
+      if (!Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) {
+        outHeaders["Content-Type"] = "application/json; charset=utf-8";
+      }
+    } else {
+      body = String(rawBody);
+    }
     const send = () => {
-      res.writeHead(status, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Access-Control-Allow-Origin": "*",
-        "X-Preflight-Mock": "true",
-        ...headers,
-      });
+      res.writeHead(status, outHeaders);
       res.end(body);
     };
     delay > 0 ? setTimeout(send, delay) : send();
@@ -430,6 +426,7 @@ export class NetworkMockServer {
       headers: { ...clientReq.headers },
     };
     delete opts.headers["proxy-connection"];
+    delete opts.headers["proxy-authorization"];
 
     const recordUrl = this.recording && this.recorded.length < 1000 ? url.toString() : undefined;
     const method = clientReq.method ?? "GET";
@@ -547,8 +544,6 @@ export class NetworkMockServer {
       await this.handleViaHandler(rule, innerReq, innerRes, url, true, hostname, port);
       return;
     }
-    // NOTE: requestBodyMatch matching remains a known limitation — the request body is not buffered
-    // before findMatch (it is teed during forward, which is too late for matching).
     const match = this.findMatch(method, url);
     if (match) {
       if (this.recording) this.recordMatched(url.toString(), method, match);
