@@ -27,6 +27,18 @@ test("ctx.fetchReal still works via worker RPC", async () => {
   assert.match(String(out.body), /real:UPSTREAM/);
 });
 
+test("non-cloneable ctx.fetchReal result degrades to null (no host crash)", async () => {
+  // ctx.fetchReal resolves an object carrying a function → postMessage(main→worker) would throw
+  // DataCloneError. The guard must send null instead of crashing the host. The handler then awaits
+  // null and throws in-isolate → runHandler returns null. The test completing IS the no-crash proof.
+  const out = await runHandler(
+    "async (req, ctx) => ({ status: 201, body: 'real:' + (await ctx.fetchReal()).body })",
+    REQ,
+    { fetchReal: async () => ({ status: 200, headers: {}, body: "x", fn: () => 1 }) } as any,
+  );
+  assert.equal(out, null);
+});
+
 test("ctx.now / ctx.uuid are implemented in-isolate", async () => {
   const out = await runHandler(
     "(req, ctx) => ({ body: (typeof ctx.now() === 'number') + ',' + /^[0-9a-f-]{36}$/.test(ctx.uuid()) })",

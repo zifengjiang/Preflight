@@ -149,7 +149,13 @@ export async function runHandler(
         // clone via postMessage). The worker resolves the Reference promise with it.
         let data: unknown = null;
         try { data = await ctx.fetchReal(); } catch { /* upstream failed → handler sees null */ }
-        if (!settled) worker.postMessage({ t: "fetchRealResult", id: m.id, data });
+        // postMessage throws synchronously (DataCloneError) on a non-cloneable value (stream, class
+        // instance, value carrying a function). Guard so a clone failure sends null instead of
+        // crashing the host (mirrors every other host-side op here degrading to null).
+        if (!settled) {
+          try { worker.postMessage({ t: "fetchRealResult", id: m.id, data }); }
+          catch { try { worker.postMessage({ t: "fetchRealResult", id: m.id, data: null }); } catch {} }
+        }
       } else if (m.t === "result") {
         finish((m.value ?? null) as HandlerResp | null);
       }
