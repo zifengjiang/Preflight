@@ -1,0 +1,35 @@
+src/tests/networkMockMatch.test.ts
+  beef5d4566d57c9a 48-67
+src/mcp/server.ts
+  beef5d4566d57c9a 48-50,567
+docs/visual-flow-ir-llm.md
+  beef5d4566d57c9a 220,226-232
+src/mcp/visual-flow/validate.ts
+  beef5d4566d57c9a 94-100,133-135
+docs/network-mocks.md
+  beef5d4566d57c9a 40,93-100
+src/tests/networkMockHardening.test.ts
+  beef5d4566d57c9a 8,98-174
+src/mcp/network-mocks/NetworkMockServer.ts
+  beef5d4566d57c9a 34,362,370-371,378-381,387-414,416,429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "032c369abc52b34ef2341788563d9ec82805db84",
+  "prompts": {
+    "beef5d4566d57c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d3f85f7-e445-4de8-882f-0dc8f2611a19",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jeffjiang",
+      "messages": [],
+      "total_additions": 919,
+      "total_deletions": 61,
+      "accepted_lines": 974,
+      "overriden_lines": 7
+    }
+  }
+}
