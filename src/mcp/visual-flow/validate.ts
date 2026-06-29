@@ -1,5 +1,23 @@
 import { VISUAL_FLOW_VERSION, type VisualFlowDocument, type VisualFlowScriptVar, type VisualStep, type NetworkMockRule, type NetworkMockResponse } from './types.js'
 import { compileHandler } from '../network-mocks/handler.js'
+import { createRequire } from 'node:module'
+
+const _require = createRequire(import.meta.url)
+const safeRegex: (pattern: string | RegExp) => boolean = _require('safe-regex')
+
+const REGEX_MAX_LENGTH = 1000
+
+/** Returns ok:true if the pattern is safe to compile and use, or ok:false with a reason. */
+export function assertSafeRegexSource(pattern: string): { ok: true } | { ok: false; reason: string } {
+  if (pattern.length > REGEX_MAX_LENGTH) {
+    return { ok: false, reason: `pattern too long (${pattern.length} chars, max ${REGEX_MAX_LENGTH})` }
+  }
+  try { new RegExp(pattern) } catch { return { ok: false, reason: 'invalid regular expression' } }
+  if (!safeRegex(pattern)) {
+    return { ok: false, reason: 'ReDoS-unsafe regex (catastrophic backtracking detected)' }
+  }
+  return { ok: true }
+}
 
 const SET_VAR_METHODS = new Set(['aiQuery', 'aiAsk', 'aiBoolean', 'aiNumber', 'aiString'])
 const TRANSFORM_VAR_RULES = new Set(['onlyNumber', 'cut', 'jsonPath', 'replace', 'handleAmount'])
@@ -71,12 +89,23 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
   if (!isNonEmptyString(o.hostRegex)) return { ok: false, message: `${path}.hostRegex 必填（用于 TLS CONNECT 主机匹配）` }
   const hostRegex = o.hostRegex.trim()
   try { new RegExp(hostRegex); } catch { return { ok: false, message: `${path}.hostRegex 无效正则` }; }
+  const hostRegexSafe = assertSafeRegexSource(hostRegex)
+  if (!hostRegexSafe.ok) return { ok: false, message: `${path}.hostRegex 不安全: ${hostRegexSafe.reason}` }
+  // Reject clearly catch-all host patterns: they MITM unintended hosts. Conservative — only flag a
+  // pattern that matches an unrelated sentinel hostname, or a known catch-all literal. Normal suffix
+  // patterns like `api\.example\.com$` do NOT match the sentinel and pass.
+  const CATCH_ALL_HOST_PATTERNS = new Set(['', '.*', '.+', '.', '^.*$', '^.+$'])
+  if (CATCH_ALL_HOST_PATTERNS.has(hostRegex) || new RegExp(hostRegex).test('nonmatching-sentinel-host.invalid')) {
+    return { ok: false, message: `${path}.hostRegex is too broad (catch-all) — anchor it to a specific host to avoid MITM of unintended hosts (e.g. end with \\$ and escape dots: api\\.example\\.com$)` }
+  }
 
   // optional path gates
   const pathPattern = typeof o.pathPattern === 'string' && o.pathPattern.trim() ? o.pathPattern.trim() : undefined
   const pathRegex = typeof o.pathRegex === 'string' && o.pathRegex.trim() ? o.pathRegex.trim() : undefined
   if (pathRegex) {
     try { new RegExp(pathRegex); } catch { return { ok: false, message: `${path}.pathRegex 无效正则` }; }
+    const pathRegexSafe = assertSafeRegexSource(pathRegex)
+    if (!pathRegexSafe.ok) return { ok: false, message: `${path}.pathRegex 不安全: ${pathRegexSafe.reason}` }
   }
 
   const queryParams: Record<string, string> | undefined =
@@ -101,7 +130,14 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
       if (!ri || typeof ri !== 'object' || Array.isArray(ri)) return { ok: false, message: `${rPath} 须为对象` }
       const r = ri as Record<string, unknown>
       if (r.body == null) return { ok: false, message: `${rPath}.body 必填` }
-      const body = String(r.body)
+      // requestBodyMatch is unsupported: the request body is not available at findMatch time, so it
+      // would silently serve the wrong canned response. Reject loudly; use a handler for body logic.
+      if (r.requestBodyMatch != null) return { ok: false, message: `${rPath}.requestBodyMatch is not supported — the request body is not available at match time; use a handler instead` }
+      // Mirror serveMock: JSON-stringify object/array bodies so {a:1} → '{"a":1}' (not '[object Object]')
+      // and [1,2,3] → '[1,2,3]' (not '1,2,3'). Arrays are typeof "object", same as serveMock.
+      const body = (r.body !== null && typeof r.body === "object")
+        ? JSON.stringify(r.body)
+        : String(r.body)
       if (body.length > 1_000_000) return { ok: false, message: `${rPath}.body 过长` }
       const statusRaw = r.status != null ? Number(r.status) : undefined
       if (statusRaw != null && (!Number.isFinite(statusRaw) || statusRaw < 100 || statusRaw > 599)) return { ok: false, message: `${rPath}.status 须为 100～599` }
@@ -113,17 +149,12 @@ function parseSingleMockRule(o: Record<string, unknown>, path: string): { ok: tr
         r.headers != null && typeof r.headers === 'object' && !Array.isArray(r.headers)
           ? Object.fromEntries(Object.entries(r.headers as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
           : undefined
-      const requestBodyMatch: Record<string, string> | undefined =
-        r.requestBodyMatch != null && typeof r.requestBodyMatch === 'object' && !Array.isArray(r.requestBodyMatch)
-          ? Object.fromEntries(Object.entries(r.requestBodyMatch as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v as string]))
-          : undefined
       responses.push({
         ...(statusRaw != null ? { status: Math.floor(statusRaw) } : {}),
         body,
         ...(callIndex != null ? { callIndex: Math.floor(callIndex) } : {}),
         ...(delay != null ? { delay: Math.floor(delay) } : {}),
         ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
-        ...(requestBodyMatch && Object.keys(requestBodyMatch).length > 0 ? { requestBodyMatch } : {}),
       })
     }
   }

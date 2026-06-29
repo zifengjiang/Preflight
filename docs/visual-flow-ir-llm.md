@@ -183,7 +183,6 @@ TLS CONNECT 握手时只有 **主机名（SNI）** 可见，路径在加密层�
 | `headers`         | 否   | 附加响应头键值对。                       |
 | `delay`           | 否   | 返回前延迟毫秒数（0～60000）。              |
 | `callIndex`       | 否   | 仅在第 n 次调用时匹配（1-based）；实现有状态序列。  |
-| `requestBodyMatch`| 否   | 请求体 JSON 的键值对精确匹配（省略 = 不限请求体）。 |
 
 ### `VisualFlowDocument.networkMocks`
 
@@ -218,10 +217,19 @@ TLS CONNECT 握手时只有 **主机名（SNI）** 可见，路径在加密层�
 
 - `hostRegex` 缺失 → 失败。
 - `hostRegex` 不是合法正则 → 失败。
+- `hostRegex` 为全匹配（`.*`、`.+`、`.`、空串等）→ 失败：会 MITM 非目标主机。
 - `pathRegex` 不是合法正则 → 失败。
 - `responses` 与 `handler` 同时存在 → 失败。
 - `responses[].body` 缺失 → 失败。
 - `responses` 为空数组（`[]`）等同于省略，视为 record-only。
+
+### hostRegex 锚定
+
+`hostRegex` 应锚定，否则会解密（MITM）非目标主机：未锚定的 `example\.com` 会同时命中 `evil-example.com` 与 `example.com.attacker.net`。
+
+- 以 `$` 结尾，并用 `\.` 转义点号，例如 `api\.example\.com$`。
+- 需匹配子域时用点边界 `(^|\.)example\.com$`，避免命中 `evil-example.com`。
+- 校验会拒绝明显的全匹配模式，但无法穷举所有不安全写法，请自行核实锚定。
 
 ---
 

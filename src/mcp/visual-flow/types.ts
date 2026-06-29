@@ -113,11 +113,6 @@ export interface NetworkMockResponse {
   /** Response body, typically a JSON string */
   body: string
   /**
-   * Key-value pairs that must be present (with matching values) in the JSON
-   * request body for this response to match. Omit to match any body.
-   */
-  requestBodyMatch?: Record<string, string>
-  /**
    * Only apply on the nth matching call to this URL pattern (1-based).
    * Enables stateful sequences: first call returns an error, second succeeds, etc.
    */

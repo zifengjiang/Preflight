@@ -45,3 +45,23 @@ test("record-only rule before a mock rule on the same host falls through to the 
   assert.ok(match);
   assert.equal(match.body, "ok");
 });
+
+test("gate-matched rule with no applicable response falls through to a later rule on the same host", () => {
+  // Rule A's only response is callIndex:2 → on the 1st call it has NO applicable response.
+  // It must NOT block Rule B (open response) — findMatch should `continue`, not `return null`.
+  const s = srv([
+    { hostRegex: "ex\\.com$", responses: [{ callIndex: 2, body: "A2" }] },
+    { hostRegex: "ex\\.com$", responses: [{ body: "B" }] },
+  ]);
+  const match = s.findMatch("GET", new URL("https://api.ex.com/"));
+  assert.ok(match, "should fall through to Rule B instead of returning null");
+  assert.equal(match.body, "B");
+});
+
+test("callIndex sequencing on a single rule still works (1st → one, 2nd → two)", () => {
+  const s = srv([
+    { hostRegex: "ex\\.com$", responses: [{ callIndex: 1, body: "one" }, { callIndex: 2, body: "two" }] },
+  ]);
+  assert.equal(s.findMatch("GET", new URL("https://api.ex.com/")).body, "one");
+  assert.equal(s.findMatch("GET", new URL("https://api.ex.com/")).body, "two");
+});

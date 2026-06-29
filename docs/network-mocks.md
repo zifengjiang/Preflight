@@ -37,7 +37,7 @@ HTTP/HTTPS 代理服务器，负责：
 - **HTTP 代理**：解析 `GET http://host/path` 格式的代理请求，匹配规则或转发
 - **HTTPS MITM**：拦截 CONNECT 请求，用动态生成的服务器证书完成 TLS 握手，解密后匹配规则
 - **证书管理**：启动时生成/加载 Root CA，按需为每个域名签发服务器证书（openssl CLI）
-- **规则匹配**：`hostRegex` 解密门 → `pathPattern`/`pathRegex` mock 门 → `method` 过滤 → `callIndex` 序列 → `requestBodyMatch` 条件
+- **规则匹配**：`hostRegex` 解密门 → `pathPattern`/`pathRegex` mock 门 → `method` 过滤 → `callIndex` 序列
 - **录制引擎**：流式 tee 捕获经过代理的所有请求/响应对（stream-tee 全量录制，不只截取最后 chunk）
 
 ### NetworkMockService (`src/mcp/network-mocks/NetworkMockService.ts`)
@@ -85,11 +85,18 @@ interface NetworkMockResponse {
   headers?: Record<string, string>
   delay?: number                        // 模拟延迟 ms（0～60000）
   callIndex?: number                    // 仅第 N 次调用时匹配（状态序列，1-based）
-  requestBodyMatch?: Record<string, string>  // 请求体 JSON 键值对精确匹配
 }
 ```
 
 `responses` 与 `handler` 互斥；两者均省略则规则仅参与录制（record-only）。
+
+### hostRegex 锚定
+
+`hostRegex` 必须锚定，否则会解密（MITM）非目标主机：未锚定的 `example\.com` 会同时命中 `evil-example.com` 与 `example.com.attacker.net`。
+
+- 以 `$` 结尾，并用 `\.` 转义点号，例如 `api\.example\.com$`。
+- 需匹配子域时用点边界 `(^|\.)example\.com$`，避免命中 `evil-example.com`。
+- 校验会拒绝明显的全匹配模式，但无法穷举所有不安全写法，请自行核实锚定。
 
 ## MCP 工具
 

@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 export interface DeviceProxyConfig {
   platform: "android" | "ios";
@@ -9,32 +9,44 @@ export interface DeviceProxyConfig {
   proxyPort: number;
 }
 
-export function configureAndroidEmulatorProxy(config: DeviceProxyConfig): void {
+/** A runner injectable for tests; defaults to execFileSync (argv array — NO shell). */
+export type AdbRunner = (file: string, args: string[]) => void;
+
+const defaultAdbRunner: AdbRunner = (file, args) => {
+  execFileSync(file, args, { stdio: "pipe", timeout: 10_000 });
+};
+
+/** Build the adb argv to set the global http_proxy. deviceId is a discrete argv
+ * element (not interpolated into a shell string), so it can never be shell-interpreted. */
+export function buildSetProxyArgs(deviceId: string, proxy: string): string[] {
+  return ["-s", deviceId, "shell", "settings", "put", "global", "http_proxy", proxy];
+}
+
+/** Build the adb argv to clear the global http_proxy. */
+export function buildRemoveProxyArgs(deviceId: string): string[] {
+  return ["-s", deviceId, "shell", "settings", "put", "global", "http_proxy", ":0"];
+}
+
+export function configureAndroidEmulatorProxy(config: DeviceProxyConfig, run: AdbRunner = defaultAdbRunner): void {
   const { deviceId, proxyHost, proxyPort } = config;
   const proxy = `${proxyHost}:${proxyPort}`;
-  execSync(`adb -s ${deviceId} shell settings put global http_proxy ${proxy}`, {
-    stdio: "pipe",
-    timeout: 10_000,
-  });
+  run("adb", buildSetProxyArgs(deviceId, proxy));
 }
 
-export function removeAndroidEmulatorProxy(serial: string): void {
-  execSync(`adb -s ${serial} shell settings put global http_proxy :0`, {
-    stdio: "pipe",
-    timeout: 10_000,
-  });
+export function removeAndroidEmulatorProxy(serial: string, run: AdbRunner = defaultAdbRunner): void {
+  run("adb", buildRemoveProxyArgs(serial));
 }
 
-export function configureDeviceProxy(config: DeviceProxyConfig): void {
+export function configureDeviceProxy(config: DeviceProxyConfig, run: AdbRunner = defaultAdbRunner): void {
   if (config.platform === "android") {
-    configureAndroidEmulatorProxy(config);
+    configureAndroidEmulatorProxy(config, run);
   }
   // iOS simulator proxy deferred to phase 2
 }
 
-export function removeDeviceProxy(platform: "android" | "ios", deviceId: string): void {
+export function removeDeviceProxy(platform: "android" | "ios", deviceId: string, run: AdbRunner = defaultAdbRunner): void {
   if (platform === "android") {
-    removeAndroidEmulatorProxy(deviceId);
+    removeAndroidEmulatorProxy(deviceId, run);
   }
   // iOS simulator proxy deferred to phase 2
 }
