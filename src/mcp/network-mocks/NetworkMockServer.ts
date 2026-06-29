@@ -2,8 +2,7 @@ import { createServer, request as httpRequest, IncomingMessage, ServerResponse, 
 import { request as httpsRequest } from "node:https";
 import { connect as netConnect } from "node:net";
 import type { NetworkMockRule, NetworkMockResponse, NetworkMockStats } from "./types.js";
-import { compileHandlerInvocation, runHandler, type HandlerReq, type HandlerResp } from "./handler.js";
-import vm from "node:vm";
+import { runHandler, type HandlerReq, type HandlerResp } from "./handler.js";
 import tls from "node:tls";
 import { TLSSocket } from "node:tls";
 import { execSync } from "node:child_process";
@@ -41,8 +40,6 @@ export class NetworkMockServer {
   private mitmHttpServer: Server | null = null;
   private recording = false;
   private recorded: { url: string; method: string; requestBody: string; responseBody: string; status: number }[] = [];
-  /** Per-rule compiled handler invocation script, keyed by getRuleKey; compiled once at start()/updateRules(). */
-  private handlerScripts = new Map<string, vm.Script>();
   // Two request-body caps with different jobs:
   //  - REQ_BODY_CAP (10KB): recording tee, used only to derive requestBodyMatch keys — never forwarded.
   //  - HANDLER_BODY_CAP (4MB): handler path buffers the body to BOTH expose it to the handler AND
@@ -60,7 +57,6 @@ export class NetworkMockServer {
     for (const rule of rules) {
       this.callCounts.set(getRuleKey(rule), 0);
     }
-    this.compileHandlers();
     this.mitmHttpServer = createServer((req, res) => {
       // hostname/port are stored on the socket during handleConnectEvent
       const sock = req.socket as any;
@@ -111,22 +107,6 @@ export class NetworkMockServer {
     this.callCounts.clear();
     for (const rule of rules) {
       this.callCounts.set(getRuleKey(rule), 0);
-    }
-    this.compileHandlers();
-  }
-
-  /**
-   * Compile each rule's handler invocation once and cache by rule key. Validation already
-   * syntax-checks handlers, but compile defensively here and skip a rule whose handler fails to
-   * compile (it then falls through to passthrough rather than throwing at request time).
-   */
-  private compileHandlers(): void {
-    this.handlerScripts.clear();
-    for (const rule of this.rules) {
-      if (!rule.handler) continue;
-      try {
-        this.handlerScripts.set(getRuleKey(rule), compileHandlerInvocation(rule.handler));
-      } catch { /* skip uncompilable handler → passthrough */ }
     }
   }
 
@@ -270,7 +250,7 @@ export class NetworkMockServer {
       return realPromise;
     };
 
-    const resp = await runHandler(rule.handler!, req, { fetchReal }, 5000, this.handlerScripts.get(ruleKey));
+    const resp = await runHandler(rule.handler!, req, { fetchReal }, 5000);
 
     if (resp != null) {
       this.serveHandlerResp(resp, clientRes);
