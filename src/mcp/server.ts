@@ -628,8 +628,9 @@ const VISUAL_FLOW_LLM_HARD_RULES = `# Preflight Visual Flow IR hard rules
 - In prompt/value/expression fields, write declared variables with interpolation syntax. Example: "{{timeBefore}}和{{timeAfter}}不同".
 - If a value comes from a previous step, create it with setVar/assignVar/transformVar first, then reference it with {{}} in later steps.
 - Use aiAct for complex multi-step interactions that need visual planning. Describe the user goal and important constraints, then let the visual model plan the concrete taps/swipes/inputs.
+- Break complex aiAct into smaller focused steps. Each aiAct should target at most 3-4 closely related operations. A single aiAct with 6+ scattered operations causes the model to get lost repeatedly locating targets. Split and use sleep between steps.
 - Use setAIActContext to define cross-step handling for unexpected UI, for example "遇到权限弹窗请同意，营销弹窗请拒绝". This context is carried into later act operations, so the visual model can handle temporary popups as part of the normal action flow.
-- Use fixed sleep steps for page transitions, app launch, refresh, animations, and list updates, for example {"type":"sleep","ms":3000}.
+- Use fixed sleep steps for page transitions, app launch, refresh, animations, list updates, and between split aiAct steps on the same form, for example {"type":"sleep","ms":3000}.
 - Place assert steps only at critical verification points, usually the changed behavior or necessary regression checkpoint. Normal action failures already stop the run.
 - Make every step prompt self-contained. Each step is executed as an independent visual instruction, so include the necessary target, expected state, or comparison data inside that step.
 - Keep prompts concise and explicit. Provide the required information only; the visual model plans detailed interaction from clear short instructions.
