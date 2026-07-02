@@ -274,7 +274,11 @@ function emitRootScriptVars(flow: VisualFlowDocument): string {
   const vars = flow.scriptVars ?? []
   if (!vars.length) return ''
   return vars
-    .map((v) => `__flowVars[${JSON.stringify(v.name)}] = __str(${JSON.stringify(v.name)});`)
+    .map((v) => {
+      const key = JSON.stringify(v.name)
+      const fallback = JSON.stringify(v.defaultValue ?? '')
+      return `__flowVars[${key}] = ${fallback};`
+    })
     .join('\n')
 }
 
