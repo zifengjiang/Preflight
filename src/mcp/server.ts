@@ -229,6 +229,9 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         resourceId: z.string().optional(),
         appRef: z.string().optional(),
         testIntent: z.string().optional(),
+        caMode: z.enum(["auto", "manual"]).optional().describe("Network mock CA setup; manual is required for a non-rooted real phone"),
+        proxyHost: z.string().optional().describe("Optional LAN address override for the WireGuard endpoint"),
+        wireguardTunnelName: z.string().min(1).optional().describe("Existing WireGuard Android tunnel name"),
         runtimeEnv: z.record(z.string()).optional(),
         waitForCompletion: z.boolean().optional().describe(
           "Set to false for multi-step flows (3+ steps) — returns immediately with a runId, then poll with watch_run. " +
@@ -258,6 +261,9 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
             rules: parsed.value.networkMocks!,
             platform,
             deviceId,
+            caMode: input.caMode,
+            proxyHost: input.proxyHost,
+            wireguardTunnelName: input.wireguardTunnelName,
           });
           mocksStarted = true;
         } catch (err) {
@@ -432,14 +438,18 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         "Matching requests return mock responses; non-matching traffic is forwarded transparently. " +
         "Automatically generates a Root CA certificate for HTTPS MITM interception. " +
         "Use before a test run to mock API responses that the app depends on. " +
-        "Currently supports Android emulator (iOS simulator deferred to phase 2).",
+        "Use WireGuard transport for Android emulators and real phones. For a non-rooted phone, use caMode=manual, install the returned CA in Android Settings, import the returned WireGuard profile once, then exercise the app. " +
+        "WireGuard static responses are supported; inline handler rules and recording are not available in this transport. Currently supports Android (iOS simulator deferred to phase 2).",
       inputSchema: {
         platform: z.enum(["ANDROID"]).describe("Device platform (Android only in v1)"),
         resourceId: z.string().describe("Device resource ID from list_devices (e.g., android:emulator-5554)"),
         port: z.number().int().positive().optional().describe("Preferred port (e.g., to match existing device proxy config)"),
+        caMode: z.enum(["auto", "manual"]).optional().describe("auto installs CA with adb root; manual leaves the PEM available for a real phone to install in Android Settings"),
+        proxyHost: z.string().optional().describe("Optional LAN address override for the WireGuard endpoint"),
+        wireguardTunnelName: z.string().min(1).optional().describe("Existing WireGuard Android tunnel name (default: preflight-mock)"),
         rules: z.array(mockRuleSchema).describe(
           "Mock rules. hostRegex (required) gates MITM/decryption against the CONNECT host (SNI); " +
-          "pathPattern/pathRegex (optional) gate the mock within a decrypted host; responses XOR handler; omit both for record-only.",
+          "pathPattern/pathRegex (optional) gate the mock within a decrypted host; use static responses (WireGuard transport does not support inline handlers).",
         ),
       },
     },
@@ -464,7 +474,15 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
         ...(r.handler ? { handler: r.handler } : {}),
         ...(r.description ? { description: r.description } : {}),
       }));
-      return jsonResult(await networkMockService.start({ rules, platform, deviceId, preferredPort: input.port }));
+      return jsonResult(await networkMockService.start({
+        rules,
+        platform,
+        deviceId,
+        preferredPort: input.port,
+        caMode: input.caMode,
+        proxyHost: input.proxyHost,
+        wireguardTunnelName: input.wireguardTunnelName,
+      }));
     },
   );
 

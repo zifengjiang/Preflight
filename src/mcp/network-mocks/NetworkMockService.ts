@@ -1,8 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { NetworkMockServer } from "./NetworkMockServer.js";
+import { homedir, networkInterfaces } from "node:os";
+import { join } from "node:path";
+import { WireGuardMockServer } from "./WireGuardMockServer.js";
 import type { NetworkMockStats } from "./types.js";
 import type { NetworkMockRule } from "../visual-flow/types.js";
-import { configureDeviceProxy, removeDeviceProxy, proxyHostForPlatform } from "./device-proxy.js";
+import { installWireGuardProfile, setWireGuardTunnelState } from "./device-proxy.js";
 import { ensureCaInstalled } from "./device-ca.js";
 
 export interface NetworkMockServiceStartConfig {
@@ -11,14 +12,29 @@ export interface NetworkMockServiceStartConfig {
   platform: "android";
   deviceId: string;
   preferredPort?: number;
+  /** Skip root-only CA installation so a real phone can install the PEM manually. */
+  caMode?: "auto" | "manual";
+  /** Optional LAN address override for the WireGuard endpoint. */
+  proxyHost?: string;
+  wireguardTunnelName?: string;
+}
+
+export interface NetworkMockStartResult extends NetworkMockStats {
+  wireguardTunnelName?: string;
+  wireguardProfilePath?: string;
+  wireguardProfile?: string;
 }
 
 // TTL for waitForCompletion:false runs — 30 minutes.
 const ABANDONED_RUN_TTL_MS = 30 * 60 * 1000;
 
 export class NetworkMockService {
-  private server = new NetworkMockServer();
-  private activeConfig: { platform: "android" | "ios"; deviceId: string } | null = null;
+  private activeServer: WireGuardMockServer | null = null;
+  private activeConfig: {
+    deviceId: string;
+    wireguardTunnelName?: string;
+    wireguardStarted?: boolean;
+  } | null = null;
 
   // ITEM 2: which runId "owns" the current mock session (null = manual session)
   private _ownerRunId: string | null = null;
@@ -79,21 +95,18 @@ export class NetworkMockService {
     if (this._exitHandlerRegistered) return;
     this._exitHandlerRegistered = true;
 
-    // "exit" must be synchronous — use execFileSync to remove adb proxy
+    // "exit" must be synchronous — close the WireGuard tunnel via adb
     this._exitHandler = () => {
       if (!this.activeConfig) return;
       try {
-        const { deviceId } = this.activeConfig;
-        execFileSync("adb", ["-s", deviceId, "shell", "settings", "put", "global", "http_proxy", ":0"], {
-          stdio: "pipe",
-          timeout: 5_000,
-        });
+        const { deviceId, wireguardTunnelName, wireguardStarted } = this.activeConfig;
+        if (wireguardStarted && wireguardTunnelName) setWireGuardTunnelState(deviceId, "down", wireguardTunnelName);
       } catch { /* best-effort */ }
     };
 
     // SIGINT / SIGTERM: run cleanup ONCE, deregister every handler (incl. the
     // "exit" one — otherwise process exit would fire _exitHandler a second time
-    // and run the adb cleanup twice), then re-raise default behaviour.
+    // and run the tunnel cleanup twice), then re-raise default behaviour.
     this._sigintHandler = () => {
       const cleanup = this._exitHandler;
       this._removeExitFailsafe();
@@ -125,7 +138,7 @@ export class NetworkMockService {
 
   // ── Core lifecycle ────────────────────────────────────────────────────────
 
-  async start(config: NetworkMockServiceStartConfig): Promise<NetworkMockStats> {
+  async start(config: NetworkMockServiceStartConfig): Promise<NetworkMockStartResult> {
     // ITEM 4: reject non-Android loudly
     if (config.platform !== "android") {
       throw new Error(
@@ -134,44 +147,71 @@ export class NetworkMockService {
       );
     }
 
-    if (this.server.getPort() > 0) {
+    if (this.activeServer?.getPort()) {
       await this.stop();
     }
-    const port = await this.server.start(config.rules, "0.0.0.0", config.preferredPort ?? 0);
-    const proxyHost = proxyHostForPlatform(config.platform);
-
-    // Install the CA BEFORE mutating the device proxy: if it fails, the device
-    // is still untouched, so we can throw without leaving a stuck http_proxy.
-    // Stop the (already-listening) server on any failure so it isn't orphaned.
+    if (config.rules.some((rule) => rule.handler)) {
+      throw new Error("WireGuard transport currently supports static responses only; handler rules are not supported");
+    }
+    const proxyHost = config.proxyHost ?? hostAddressForWireGuard();
+    const server = new WireGuardMockServer();
+    this.activeServer = server;
     try {
-      const result = await ensureCaInstalled({
-        serial: config.deviceId,
-        caPemPath: this.server.getRootCaPemPath(),
-      });
-      if (!result.installed) {
-        throw new Error(
-          `CA install failed on ${config.deviceId} — the device likely needs a rootable (non-Play-Store) Android image (adb root must succeed), or the cert push was denied.` +
-          (result.reason ? ` (${result.reason})` : ""),
-        );
+      await server.start(config.rules, config.preferredPort ?? 0);
+    } catch (err) {
+      this.activeServer = null;
+      throw err;
+    }
+    const wireguardTunnelName = config.wireguardTunnelName ?? "preflight-mock";
+    let wireguardProfilePath: string | undefined;
+    let wireguardProfile: string | undefined;
+
+    // Install the CA BEFORE mutating the device proxy in auto mode. Manual mode
+    // is for production phones: get_root_ca_cert() exposes the PEM for the user
+    // to install in Android Settings.
+    try {
+      if ((config.caMode ?? "auto") === "auto") {
+        const result = await ensureCaInstalled({
+          serial: config.deviceId,
+          caPemPath: server.getRootCaPemPath(),
+        });
+        if (!result.installed) {
+          throw new Error(
+            `CA install failed on ${config.deviceId} — the device likely needs a rootable (non-Play-Store) Android image (adb root must succeed), or the cert push was denied.` +
+            (result.reason ? ` (${result.reason})` : ""),
+          );
+        }
       }
     } catch (err) {
-      try { await this.server.stop(); } catch { /* best-effort */ }
+      try { await server.stop(); } catch { /* best-effort */ }
+      this.activeServer = null;
       throw err;
     }
 
     // From here on the device gets mutated; if anything throws, roll back so we
-    // never leave the proxy set or the server listening.
+    // never leave the WireGuard tunnel up or the server listening.
     try {
-      configureDeviceProxy({
-        platform: config.platform,
+      this.activeConfig = {
         deviceId: config.deviceId,
-        proxyHost,
-        proxyPort: port,
-      });
-      this.activeConfig = { platform: config.platform, deviceId: config.deviceId };
+        wireguardTunnelName,
+      };
+      const profileDir = join(process.env.PREFLIGHT_HOME?.trim() || join(homedir(), ".preflight"), "network-mock-wireguard");
+      wireguardProfilePath = join(profileDir, `${wireguardTunnelName}.conf`);
+      wireguardProfile = server.getClientConfig(proxyHost, wireguardTunnelName);
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(profileDir, { recursive: true });
+      await fs.writeFile(wireguardProfilePath, wireguardProfile, { mode: 0o600 });
+      installWireGuardProfile(config.deviceId, wireguardProfilePath, `/sdcard/Download/${wireguardTunnelName}.conf`);
+      setWireGuardTunnelState(config.deviceId, "up", wireguardTunnelName);
+      this.activeConfig.wireguardStarted = true;
       // ITEM 3: register exit failsafe once mock is active
       this._registerExitFailsafe();
-      return this.server.getStats();
+      return {
+        ...server.getStats(),
+        wireguardTunnelName,
+        wireguardProfilePath,
+        wireguardProfile,
+      };
     } catch (err) {
       try { await this.stop(); } catch { /* best-effort rollback */ }
       throw err;
@@ -186,39 +226,46 @@ export class NetworkMockService {
     this._ownerRunId = null;
 
     if (this.activeConfig) {
-      try {
-        removeDeviceProxy(this.activeConfig.platform, this.activeConfig.deviceId);
-      } catch {
-        // best-effort cleanup
+      if (this.activeConfig.wireguardStarted && this.activeConfig.wireguardTunnelName) {
+        try { setWireGuardTunnelState(this.activeConfig.deviceId, "down", this.activeConfig.wireguardTunnelName); } catch { /* best-effort cleanup */ }
       }
       this.activeConfig = null;
     }
-    await this.server.stop();
-    return this.server.getStats();
+    if (this.activeServer) await this.activeServer.stop();
+    this.activeServer = null;
+    return { running: false, port: 0, mitmEnabled: false, rules: [] };
   }
 
   isRunning(): boolean {
-    return this.server.getPort() > 0;
+    return (this.activeServer?.getPort() ?? 0) > 0;
   }
 
   getStats(): NetworkMockStats {
-    return this.server.getStats();
+    return this.activeServer?.getStats() ?? { running: false, port: 0, mitmEnabled: false, rules: [] };
   }
 
   updateRules(rules: NetworkMockRule[]): void {
-    this.server.updateRules(rules);
+    this.activeServer?.updateRules(rules);
   }
 
   getRootCACert(): string | null {
-    return this.server.getRootCACert();
+    return this.activeServer?.getRootCACert() ?? null;
   }
 
-  setRecording(enabled: boolean): void { this.server.setRecording(enabled); }
-  isRecording(): boolean { return this.server.isRecording(); }
-  getRecordedCount(): number { return this.server.getRecordedCount(); }
+  setRecording(enabled: boolean): void { this.activeServer?.setRecording(enabled); }
+  isRecording(): boolean { return this.activeServer?.isRecording() ?? false; }
+  getRecordedCount(): number { return this.activeServer?.getRecordedCount() ?? 0; }
   exportRecordedRules(): import("../visual-flow/types.js").NetworkMockRule[] {
-    const rules = this.server.exportRecordedRules();
-    this.server.clearRecording();
-    return rules;
+    return this.activeServer?.exportRecordedRules() ?? [];
   }
+}
+
+function hostAddressForWireGuard(): string {
+  const interfaces = networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) return entry.address;
+    }
+  }
+  throw new Error("cannot determine a host LAN address for WireGuard; pass proxyHost explicitly");
 }

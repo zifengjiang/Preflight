@@ -41,6 +41,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@swmansion/argent": "^0.18.0",
     "@types/koa": "^3.0.2",
     "@types/lodash": "^4.17.24",
     "@types/node": "^20.17.57",
