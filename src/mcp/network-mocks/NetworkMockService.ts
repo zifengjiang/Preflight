@@ -1,6 +1,6 @@
 import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
-import { WireGuardMockServer } from "./WireGuardMockServer.js";
+import { WireGuardMockServer, WIREGUARD_RECORDING_UNSUPPORTED } from "./WireGuardMockServer.js";
 import type { NetworkMockStats } from "./types.js";
 import type { NetworkMockRule } from "../visual-flow/types.js";
 import { installWireGuardProfile, setWireGuardTunnelState } from "./device-proxy.js";
@@ -147,11 +147,11 @@ export class NetworkMockService {
       );
     }
 
+    if (config.rules.some((rule) => rule.handler !== undefined)) {
+      throw new Error("WireGuard transport currently supports static responses only; handler rules are not supported");
+    }
     if (this.activeServer?.getPort()) {
       await this.stop();
-    }
-    if (config.rules.some((rule) => rule.handler)) {
-      throw new Error("WireGuard transport currently supports static responses only; handler rules are not supported");
     }
     const proxyHost = config.proxyHost ?? hostAddressForWireGuard();
     const server = new WireGuardMockServer();
@@ -252,11 +252,11 @@ export class NetworkMockService {
     return this.activeServer?.getRootCACert() ?? null;
   }
 
-  setRecording(enabled: boolean): void { this.activeServer?.setRecording(enabled); }
+  setRecording(_enabled: boolean): void { throw new Error(WIREGUARD_RECORDING_UNSUPPORTED); }
   isRecording(): boolean { return this.activeServer?.isRecording() ?? false; }
   getRecordedCount(): number { return this.activeServer?.getRecordedCount() ?? 0; }
   exportRecordedRules(): import("../visual-flow/types.js").NetworkMockRule[] {
-    return this.activeServer?.exportRecordedRules() ?? [];
+    throw new Error(WIREGUARD_RECORDING_UNSUPPORTED);
   }
 }
 

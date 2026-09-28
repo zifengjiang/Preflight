@@ -5,6 +5,8 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NetworkMockRule, NetworkMockStats } from "./types.js";
 
+export const WIREGUARD_RECORDING_UNSUPPORTED = "recording is not supported by the WireGuard transport yet";
+
 const X25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
 
 /**
@@ -29,11 +31,11 @@ export class WireGuardMockServer {
   private port = 0;
 
   async start(rules: NetworkMockRule[], preferredPort = 0): Promise<number> {
-    if (this.process) await this.stop();
-    if (rules.some((rule) => rule.handler)) {
+    if (rules.some((rule) => rule.handler !== undefined)) {
       throw new Error("WireGuard transport currently supports static responses only; handler rules are not supported");
     }
 
+    if (this.process) await this.stop();
     this.rules = rules;
     const bin = findMitmproxyBinary();
     const port = preferredPort || await findFreeUdpPort();
@@ -142,7 +144,7 @@ export class WireGuardMockServer {
   }
 
   updateRules(rules: NetworkMockRule[]): void {
-    if (rules.some((rule) => rule.handler)) {
+    if (rules.some((rule) => rule.handler !== undefined)) {
       throw new Error("WireGuard transport currently supports static responses only; handler rules are not supported");
     }
     this.rules = rules;
@@ -167,12 +169,12 @@ export class WireGuardMockServer {
   }
 
   setRecording(_enabled: boolean): void {
-    throw new Error("recording is not supported by the WireGuard transport yet");
+    throw new Error(WIREGUARD_RECORDING_UNSUPPORTED);
   }
 
   isRecording(): boolean { return false; }
   getRecordedCount(): number { return 0; }
-  exportRecordedRules(): NetworkMockRule[] { return []; }
+  exportRecordedRules(): NetworkMockRule[] { throw new Error(WIREGUARD_RECORDING_UNSUPPORTED); }
 
   private writeAddon(): void {
     if (!this.addonPath || !this.statsPath) return;

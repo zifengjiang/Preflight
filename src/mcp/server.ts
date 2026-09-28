@@ -16,6 +16,7 @@ import { assertSafeRegexSource } from "./visual-flow/validate.js";
 import { registerExplorationTools } from "./exploration/index.js";
 import { createMidsceneSessionFromResourceId, ensureIosWdaStarted } from "./exploration/tools-session.js";
 import { NetworkMockService } from "./network-mocks/NetworkMockService.js";
+import { WIREGUARD_RECORDING_UNSUPPORTED } from "./network-mocks/WireGuardMockServer.js";
 import type { NetworkMockRule } from "./visual-flow/types.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -38,7 +39,7 @@ function isSafeRegexString(s: string): boolean {
   return r.ok;
 }
 
-/** Shared zod schema for a network-mock rule, with hostRegex/pathRegex compile-checked and ReDoS-rejected. */
+/** WireGuard-only zod schema for a network-mock rule, with hostRegex/pathRegex compile-checked and ReDoS-rejected. */
 const mockRuleSchema = z.object({
   hostRegex: z.string()
     .refine((s) => { try { new RegExp(s); return true; } catch { return false; } }, { message: "hostRegex must be a valid RegExp" })
@@ -57,9 +58,10 @@ const mockRuleSchema = z.object({
     delay: z.number().int().min(0).optional(),
     // requestBodyMatch is unsupported (request body unavailable at match time). Reject loudly
     // rather than silently strip it, so a stale/recorded rule fails fast instead of misbehaving.
-    requestBodyMatch: z.never({ message: "requestBodyMatch is not supported — use a handler instead" }).optional(),
+    requestBodyMatch: z.never({ message: "requestBodyMatch is not supported by the WireGuard transport — use static responses" }).optional(),
   })).optional(),
-  handler: z.string().optional(),
+  // Reject stale clients explicitly rather than silently stripping their handler.
+  handler: z.never({ message: "WireGuard transport currently supports static responses only; handler rules are not supported" }).optional(),
   description: z.string().optional(),
 });
 
@@ -471,7 +473,6 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
           ...(resp.headers ? { headers: resp.headers } : {}),
           ...(resp.delay != null ? { delay: resp.delay } : {}),
         })) } : {}),
-        ...(r.handler ? { handler: r.handler } : {}),
         ...(r.description ? { description: r.description } : {}),
       }));
       return jsonResult(await networkMockService.start({
@@ -514,7 +515,8 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
       title: "Update Network Mock Rules",
       description:
         "Hot-reload mock rules without stopping the server. " +
-        "Use to change mock responses mid-test without restarting the proxy.",
+        "Use to change static mock responses mid-test without restarting the proxy. " +
+        "WireGuard transport does not support inline handler rules.",
       inputSchema: {
         rules: z.array(mockRuleSchema),
       },
@@ -536,7 +538,6 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
           ...(resp.headers ? { headers: resp.headers } : {}),
           ...(resp.delay != null ? { delay: resp.delay } : {}),
         })) } : {}),
-        ...(r.handler ? { handler: r.handler } : {}),
         ...(r.description ? { description: r.description } : {}),
       }));
       networkMockService.updateRules(parsed);
@@ -563,53 +564,19 @@ export function createPreflightMcpServer(options: PreflightMcpOptions = {}): Mcp
     },
   );
 
-  server.registerTool(
-    "start_recording",
-    {
-      title: "Start Network Recording",
-      description:
-        "Start recording network traffic through the mock proxy. All requests and responses are captured " +
-        "and can be exported as mock rules via export_recorded_rules. Network mocks must already be running.",
-    },
-    async () => {
-      if (!networkMockService.isRunning()) {
-        return jsonResult({ ok: false, message: "network mocks not running — call start_network_mocks first" });
-      }
-      networkMockService.setRecording(true);
-      return jsonResult({ ok: true, message: "Recording started" });
-    },
-  );
-
-  server.registerTool(
-    "stop_recording",
-    {
-      title: "Stop Network Recording",
-      description: "Stop recording and return the count of captured requests.",
-    },
-    async () => {
-      if (!networkMockService.isRunning()) {
-        return jsonResult({ ok: false, message: "network mocks not running" });
-      }
-      const count = networkMockService.getRecordedCount();
-      networkMockService.setRecording(false);
-      return jsonResult({ ok: true, recorded: count });
-    },
-  );
-
-  server.registerTool(
-    "export_recorded_rules",
-    {
-      title: "Export Recorded Rules",
-      description:
-        "Export recorded network traffic as NetworkMockRule[]. " +
-        "Duplicated URLs are merged and sequential responses are assigned callIndex. " +
-        "Use after stop_recording to convert captured traffic into reusable mock rules.",
-    },
-    async () => {
-      const rules = networkMockService.exportRecordedRules();
-      return jsonResult({ ok: true, count: rules.length, rules });
-    },
-  );
+  // Keep names for stale clients, but never advertise or report recording success.
+  for (const name of ["start_recording", "stop_recording", "export_recorded_rules"] as const) {
+    server.registerTool(
+      name,
+      {
+        description: `Unsupported: ${WIREGUARD_RECORDING_UNSUPPORTED}. Use static mock responses instead.`,
+      },
+      async () => ({
+        ...jsonResult({ ok: false, message: WIREGUARD_RECORDING_UNSUPPORTED }),
+        isError: true,
+      }),
+    );
+  }
 
   registerExplorationTools(server, { client, loadConfigEnv, ensureAgentStarted: async () => { await runtime.ensureStarted(); }, createSessionFromMeta: createMidsceneSessionFromResourceId, projectRoot });
 
